@@ -13,3 +13,4 @@ encoding_rs = "0.8"
 
 [dev-dependencies]
 async-std = { version = "1.5", features = ["attributes"] }
+rstest = "0.6"
