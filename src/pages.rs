@@ -1,20 +1,98 @@
-use byteorder::{BigEndian, ReadBytesExt};
+use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use std::convert::TryFrom;
 use std::iter::FromIterator;
 
 pub(crate) struct PageHeader {
-    pub(crate) slot_count: i16,
+    pub(crate) slot_count: u16,
 }
-pub(crate) struct BootPage {
+
+pub struct BootPage {
     pub(crate) header: PageHeader,
     pub(crate) database_name: String,
     pub(crate) first_sys_indexes: PagePointer,
+
+    bytes: [u8; 8192],
+}
+
+#[derive(Debug)]
+pub(crate) enum Record<'a> {
+    Primary(&'a [u8]),
+    /* TODO
+        Forwarded,
+        ForwardingStub,
+        Index,
+        BlobFragment,
+        GhostIndex,
+        GhostData,
+        GhostVersion,
+    */
+}
+
+impl BootPage {
+    // TODO use iterator?
+    fn slots(&self) -> Vec<usize> {
+        let mut slots = Vec::with_capacity(self.header.slot_count as usize);
+
+        for i in 1..=self.header.slot_count {
+            let index = self.bytes.len() - i as usize * 2;
+            let mut slot_bytes = &self.bytes[index..(index + 2)];
+            let slot_value = slot_bytes.read_u16::<LittleEndian>().unwrap();
+            slots.push(slot_value as usize);
+        }
+
+        slots
+    }
+
+    fn records<'a, 'b: 'a>(&'b self) -> Vec<Record<'a>> {
+        let mut types = Vec::with_capacity(self.header.slot_count as usize);
+
+        for i in self.slots() {
+            let record_type = self.bytes[i as usize];
+
+            let record_type = (record_type & 0x0E) >> 1;
+            let record_type = match record_type {
+                0 => Record::Primary(&self.bytes[i..(self.bytes.len() - i)]),
+                record_type => todo!("Unknown record type {}", record_type),
+            };
+
+            types.push(record_type);
+        }
+        types
+    }
+
+    pub fn sysalloc_units(&self) -> Vec<SysallocUnit> {
+        let schema = crate::schema::sysallocunit_schema();
+
+        for record in self.records() {
+            match record {
+                Record::Primary(bytes) => {
+                    let mut bytes = bytes;
+                    for column in &schema {
+                        println!("Parsing {:?}… bytes", &bytes[0..4]);
+
+                        let (value, rest) = crate::Value::parse(&bytes, &column.column_type);
+
+                        println!("{:?}", value);
+
+                        bytes = rest;
+                    }
+                }
+                _ => todo!(),
+            }
+        }
+
+        // TODO sysallocunits = scanner.ScanLinkedDataPages<sysallocunit>(bootPage.FirstSysIndexes, CompressionContext.NoCompression).ToList();
+        vec![]
+    }
 }
 
 pub(crate) struct PagePointer {
     pub(crate) page_id: u16,
     pub(crate) file_id: u16,
 }
+
+#[derive(Debug)]
+pub struct SysallocUnit {}
 
 /// Converts the bytes into an `BootPage`.
 ///
@@ -37,6 +115,7 @@ impl TryFrom<[u8; 8192]> for BootPage {
         let database_name = String::from_iter(s.chars().filter(|c| *c != '†'));
 
         let first_sys_indexes = PagePointer {
+            // TODO Big vs Little
             page_id: (&bytes[612..616]).read_u16::<BigEndian>().unwrap(),
             file_id: (&bytes[616..618]).read_u16::<BigEndian>().unwrap(),
         };
@@ -45,6 +124,7 @@ impl TryFrom<[u8; 8192]> for BootPage {
             header,
             database_name,
             first_sys_indexes,
+            bytes,
         })
     }
 }
@@ -69,7 +149,7 @@ impl TryFrom<&[u8]> for PageHeader {
         );
 
         Ok(PageHeader {
-            slot_count: (&bytes[22..24]).read_i16::<BigEndian>().unwrap(),
+            slot_count: (&bytes[22..24]).read_u16::<LittleEndian>().unwrap(),
         })
     }
 }
