@@ -17,8 +17,8 @@ async fn test_read_database_name(file: &str, db_name: &str) -> Result<()> {
 
 #[async_std::test]
 async fn test_read_boot_page_records() -> Result<()> {
-    let db = MdfDatabase::open("tests/AWLT2005.mdf").await?;
-    let sysalloc_units = db.boot_page().sysalloc_units();
-    println!("{:?}", sysalloc_units);
+    let mut db = MdfDatabase::open("tests/AWLT2005.mdf").await?;
+    let sysalloc_unit = db.sysalloc_unit().await?;
+    println!("{:?}", sysalloc_unit);
     Ok(())
 }

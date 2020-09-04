@@ -2,6 +2,7 @@ use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use std::convert::TryFrom;
 use std::iter::FromIterator;
 
+#[derive(Debug)]
 pub(crate) struct PageHeader {
     pub(crate) slot_count: u16,
 }
@@ -28,71 +29,11 @@ pub(crate) enum Record<'a> {
     */
 }
 
-impl BootPage {
-    // TODO use iterator?
-    fn slots(&self) -> Vec<usize> {
-        let mut slots = Vec::with_capacity(self.header.slot_count as usize);
-
-        for i in 1..=self.header.slot_count {
-            let index = self.bytes.len() - i as usize * 2;
-            let mut slot_bytes = &self.bytes[index..(index + 2)];
-            let slot_value = slot_bytes.read_u16::<LittleEndian>().unwrap();
-            slots.push(slot_value as usize);
-        }
-
-        slots
-    }
-
-    fn records<'a, 'b: 'a>(&'b self) -> Vec<Record<'a>> {
-        let mut types = Vec::with_capacity(self.header.slot_count as usize);
-
-        for i in self.slots() {
-            let record_type = self.bytes[i as usize];
-
-            let record_type = (record_type & 0x0E) >> 1;
-            let record_type = match record_type {
-                0 => Record::Primary(&self.bytes[i..(self.bytes.len() - i)]),
-                record_type => todo!("Unknown record type {}", record_type),
-            };
-
-            types.push(record_type);
-        }
-        types
-    }
-
-    pub fn sysalloc_units(&self) -> Vec<SysallocUnit> {
-        let schema = crate::schema::sysallocunit_schema();
-
-        for record in self.records() {
-            match record {
-                Record::Primary(bytes) => {
-                    let mut bytes = bytes;
-                    for column in &schema {
-                        println!("Parsing {:?}… bytes", &bytes[0..4]);
-
-                        let (value, rest) = crate::Value::parse(&bytes, &column.column_type);
-
-                        println!("{:?}", value);
-
-                        bytes = rest;
-                    }
-                }
-                _ => todo!(),
-            }
-        }
-
-        // TODO sysallocunits = scanner.ScanLinkedDataPages<sysallocunit>(bootPage.FirstSysIndexes, CompressionContext.NoCompression).ToList();
-        vec![]
-    }
-}
-
+#[derive(Debug)]
 pub(crate) struct PagePointer {
     pub(crate) page_id: u16,
     pub(crate) file_id: u16,
 }
-
-#[derive(Debug)]
-pub struct SysallocUnit {}
 
 /// Converts the bytes into an `BootPage`.
 ///
@@ -115,9 +56,8 @@ impl TryFrom<[u8; 8192]> for BootPage {
         let database_name = String::from_iter(s.chars().filter(|c| *c != '†'));
 
         let first_sys_indexes = PagePointer {
-            // TODO Big vs Little
-            page_id: (&bytes[612..616]).read_u16::<BigEndian>().unwrap(),
-            file_id: (&bytes[616..618]).read_u16::<BigEndian>().unwrap(),
+            page_id: (&bytes[612..616]).read_u16::<LittleEndian>().unwrap(),
+            file_id: (&bytes[616..618]).read_u16::<LittleEndian>().unwrap(),
         };
 
         Ok(Self {
@@ -142,14 +82,61 @@ impl TryFrom<&[u8]> for PageHeader {
     type Error = &'static str;
 
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        assert!(
-            bytes.len() == 96,
-            "Page header must be 96 bytes but was {}.",
-            bytes.len()
-        );
+        if bytes.len() != 96 {
+            return Err("Page header must be 96 bytes.");
+        }
 
         Ok(PageHeader {
             slot_count: (&bytes[22..24]).read_u16::<LittleEndian>().unwrap(),
         })
+    }
+}
+
+pub(crate) struct Page {
+    header: PageHeader,
+    bytes: [u8; 8192],
+}
+
+impl Page {
+    fn slots(&self) -> Vec<usize> {
+        let mut slots = Vec::with_capacity(self.header.slot_count as usize);
+
+        for i in 1usize..=self.header.slot_count as usize {
+            let index = self.bytes.len() - i * 2;
+            let mut slot_bytes = &self.bytes[index..(index + 2)];
+            let slot_value = slot_bytes.read_u16::<LittleEndian>().unwrap();
+            slots.push(slot_value as usize);
+        }
+
+        slots
+    }
+
+    pub(crate) fn records<'a, 'b: 'a>(&'b self) -> Vec<Record<'a>> {
+        let mut records = Vec::with_capacity(self.header.slot_count as usize);
+
+        for slots in self.slots().chunks(2) {
+            let record_type = self.bytes[slots[0] as usize];
+            let record_type = (record_type & 0x0E) >> 1;
+
+            // TODO: skip first and last byte? Were always set to 16 and 248
+            let range = (slots[0] + 1) as usize..(slots[1] - 1) as usize;
+            let record_type = match record_type {
+                0 => Record::Primary(&self.bytes[range]),
+                record_type => todo!("Unknown record type {}", record_type),
+            };
+
+            records.push(record_type);
+        }
+        records
+    }
+}
+
+impl TryFrom<[u8; 8192]> for Page {
+    type Error = &'static str;
+
+    fn try_from(bytes: [u8; 8192]) -> Result<Self, Self::Error> {
+        let header = PageHeader::try_from(&bytes[0..96])?;
+
+        Ok(Self { header, bytes })
     }
 }
