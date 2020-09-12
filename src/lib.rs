@@ -1,13 +1,14 @@
 #![warn(rust_2018_idioms)]
 
 mod pages;
+mod sys;
 
+use crate::pages::{BootPage, Page, PagePointer, Record};
+use crate::sys::SysallocUnit;
 use async_std::fs::File;
 use async_std::io::{Read, Result};
 use async_std::path::{Path, PathBuf};
 use async_std::prelude::*;
-use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
-use pages::{BootPage, Page, PagePointer, Record};
 use std::convert::TryFrom;
 use std::pin::Pin;
 
@@ -49,7 +50,7 @@ impl MdfDatabase {
         &self.boot_page.database_name
     }
 
-    pub async fn sysalloc_unit(&mut self) -> Result<Vec<SysallocUnit>> {
+    pub(crate) async fn sysalloc_unit(&mut self) -> Result<Vec<SysallocUnit>> {
         let mut buffer = [0u8; 8192];
         self.page_reader
             .read_page(&self.boot_page.first_sys_indexes, &mut buffer)
@@ -57,8 +58,9 @@ impl MdfDatabase {
 
         let page = Page::try_from(buffer).unwrap();
 
-        let mut units = Vec::with_capacity(10);
-        for record in page.records() {
+        let records = page.records();
+        let mut units = Vec::with_capacity(records.len());
+        for record in records {
             match record {
                 Record::Primary(bytes) => {
                     let sysalloc_unit = SysallocUnit::try_from(bytes).unwrap();
@@ -102,84 +104,5 @@ impl PageReader {
         }
 
         Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct SysallocUnit {
-    /*
-        new DataColumn("auid", "bigint"),
-        new DataColumn("type", "tinyint"),
-        new DataColumn("ownerid", "bigint"),
-        new DataColumn("status", "int"),
-        new DataColumn("fgid", "smallint"),
-        new DataColumn("pgfirst", "binary(6)"),
-        new DataColumn("pgroot", "binary(6)"),
-        new DataColumn("pgfirstiam", "binary(6)"),
-        new DataColumn("pcused", "bigint"),
-        new DataColumn("pcdata", "bigint"),
-        new DataColumn("pcreserved", "bigint"),
-        new DataColumn("dbfragid", "int")
-    */
-    auid: i64,
-    r#type: i8,
-    ownerid: i64,
-    status: i32,
-    fgid: i16,
-    pgfirst: Vec<u8>,
-    pgroot: Vec<u8>,
-    pgfirstiam: Vec<u8>,
-    pcused: i64,
-    pcdata: i64,
-    pcreserved: i64,
-    dbfragid: i32,
-}
-
-impl TryFrom<&[u8]> for SysallocUnit {
-    type Error = &'static str;
-
-    fn try_from(bytes: &[u8]) -> std::result::Result<Self, Self::Error> {
-        let mut bytes = bytes;
-        let auid = bytes.read_i64::<LittleEndian>().unwrap();
-
-        let r#type = bytes.read_i8().unwrap();
-
-        let ownerid = bytes.read_i64::<LittleEndian>().unwrap();
-
-        let status = bytes.read_i32::<LittleEndian>().unwrap();
-
-        let fgid = bytes.read_i16::<LittleEndian>().unwrap();
-
-        let pgfirst = (&bytes[0..6]).to_vec();
-        let bytes = &bytes[6..];
-
-        let pgroot = (&bytes[0..6]).to_vec();
-        let bytes = &bytes[6..];
-
-        let pgfirstiam = (&bytes[0..6]).to_vec();
-        let mut bytes = &bytes[6..];
-
-        let pcused = bytes.read_i64::<LittleEndian>().unwrap();
-
-        let pcdata = bytes.read_i64::<LittleEndian>().unwrap();
-
-        let pcreserved = bytes.read_i64::<LittleEndian>().unwrap();
-
-        let dbfragid = bytes.read_i32::<LittleEndian>().unwrap();
-
-        Ok(Self {
-            auid,
-            r#type,
-            ownerid,
-            status,
-            fgid,
-            pgfirst,
-            pgroot,
-            pgfirstiam,
-            pcused,
-            pcdata,
-            pcreserved,
-            dbfragid,
-        })
     }
 }

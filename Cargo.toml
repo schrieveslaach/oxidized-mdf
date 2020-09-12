@@ -14,4 +14,5 @@ num-bigint = "0.3"
 
 [dev-dependencies]
 async-std = { version = "1.5", features = ["attributes"] }
+pretty_assertions = "0.6"
 rstest = "0.6"

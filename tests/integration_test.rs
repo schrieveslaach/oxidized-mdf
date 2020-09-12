@@ -1,5 +1,6 @@
 use async_std::io::Result;
 use oxidized_mdf::MdfDatabase;
+use pretty_assertions::assert_eq;
 use rstest::rstest;
 
 #[rstest(
@@ -10,15 +11,7 @@ use rstest::rstest;
 )]
 #[async_std::test]
 async fn test_read_database_name(file: &str, db_name: &str) -> Result<()> {
-    let db = MdfDatabase::open(format!("tests/{}", file)).await?;
+    let db = MdfDatabase::open(format!("data/{}", file)).await?;
     assert_eq!(db.database_name(), db_name);
-    Ok(())
-}
-
-#[async_std::test]
-async fn test_read_boot_page_records() -> Result<()> {
-    let mut db = MdfDatabase::open("tests/AWLT2005.mdf").await?;
-    let sysalloc_unit = db.sysalloc_unit().await?;
-    println!("{:?}", sysalloc_unit);
     Ok(())
 }

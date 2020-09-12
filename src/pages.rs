@@ -1,4 +1,4 @@
-use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt};
 use std::convert::TryFrom;
 use std::iter::FromIterator;
 
@@ -114,18 +114,23 @@ impl Page {
     pub(crate) fn records<'a, 'b: 'a>(&'b self) -> Vec<Record<'a>> {
         let mut records = Vec::with_capacity(self.header.slot_count as usize);
 
-        for slots in self.slots().chunks(2) {
-            let record_type = self.bytes[slots[0] as usize];
+        let slots = self.slots();
+        for (index, slot) in slots.iter().enumerate() {
+            let record_type = self.bytes[*slot];
             let record_type = (record_type & 0x0E) >> 1;
 
-            // TODO: skip first and last byte? Were always set to 16 and 248
-            let range = (slots[0] + 1) as usize..(slots[1] - 1) as usize;
-            let record_type = match record_type {
-                0 => Record::Primary(&self.bytes[range]),
-                record_type => todo!("Unknown record type {}", record_type),
-            };
+            if let Some(next_slot) = slots.get(index + 1) {
+                let range = *slot..*next_slot;
 
-            records.push(record_type);
+                let record_type = match record_type {
+                    0 => Record::Primary(&self.bytes[range]),
+                    record_type => todo!("Unknown record type {}", record_type),
+                };
+
+                records.push(record_type);
+            } else {
+                // TODO...
+            }
         }
         records
     }
