@@ -1,5 +1,25 @@
+use crate::pages::{Page, Record};
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::convert::TryFrom;
+
+pub(crate) struct BaseTableData {
+    pub(crate) sysalloc_units: Vec<SysallocUnit>,
+}
+
+impl BaseTableData {
+    pub(crate) fn new(page: Page) -> Self {
+        let sysalloc_units = page
+            .records()
+            .into_iter()
+            .map(|record| match record {
+                Record::Primary(bytes) => SysallocUnit::try_from(bytes),
+            })
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+
+        Self { sysalloc_units }
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct SysallocUnit {
@@ -78,10 +98,9 @@ mod tests {
 
     #[async_std::test]
     async fn test_read_boot_page_records() -> Result<()> {
-        let mut db = MdfDatabase::open("data/AWLT2005.mdf").await?;
+        let db = MdfDatabase::open("data/AWLT2005.mdf").await?;
         let auids = db
-            .sysalloc_unit()
-            .await?
+            .sysalloc_units()
             .into_iter()
             .map(|su| su.auid)
             .collect::<Vec<_>>();

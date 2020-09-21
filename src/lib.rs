@@ -3,8 +3,8 @@
 mod pages;
 mod sys;
 
-use crate::pages::{BootPage, Page, PagePointer, Record};
-use crate::sys::SysallocUnit;
+use crate::pages::{BootPage, Page, PagePointer};
+use crate::sys::{BaseTableData, SysallocUnit};
 use async_std::fs::File;
 use async_std::io::{Read, Result};
 use async_std::path::{Path, PathBuf};
@@ -15,6 +15,7 @@ use std::pin::Pin;
 pub struct MdfDatabase {
     page_reader: PageReader,
     boot_page: BootPage,
+    base_table_data: BaseTableData,
 }
 
 impl MdfDatabase {
@@ -39,10 +40,18 @@ impl MdfDatabase {
             page_reader.read_next_page(&mut buffer).await?;
         }
         page_reader.read_next_page(&mut buffer).await?;
+        let boot_page = BootPage::try_from(buffer).unwrap();
+
+        page_reader
+            .read_page(&boot_page.first_sys_indexes, &mut buffer)
+            .await?;
+        let page = Page::try_from(buffer).unwrap();
+        let base_table_data = BaseTableData::new(page);
 
         Ok(Self {
             page_reader,
-            boot_page: BootPage::try_from(buffer).unwrap(),
+            boot_page,
+            base_table_data,
         })
     }
 
@@ -50,26 +59,8 @@ impl MdfDatabase {
         &self.boot_page.database_name
     }
 
-    pub(crate) async fn sysalloc_unit(&mut self) -> Result<Vec<SysallocUnit>> {
-        let mut buffer = [0u8; 8192];
-        self.page_reader
-            .read_page(&self.boot_page.first_sys_indexes, &mut buffer)
-            .await?;
-
-        let page = Page::try_from(buffer).unwrap();
-
-        let records = page.records();
-        let mut units = Vec::with_capacity(records.len());
-        for record in records {
-            match record {
-                Record::Primary(bytes) => {
-                    let sysalloc_unit = SysallocUnit::try_from(bytes).unwrap();
-                    units.push(sysalloc_unit);
-                }
-            }
-        }
-
-        Ok(units)
+    pub(crate) fn sysalloc_units(&self) -> &Vec<SysallocUnit> {
+        &self.base_table_data.sysalloc_units
     }
 }
 

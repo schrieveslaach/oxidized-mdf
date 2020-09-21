@@ -108,6 +108,8 @@ impl Page {
             slots.push(slot_value as usize);
         }
 
+        slots.sort();
+
         slots
     }
 
