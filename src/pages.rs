@@ -2,7 +2,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use std::convert::TryFrom;
 use std::iter::FromIterator;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct PageHeader {
     pub(crate) slot_count: u16,
 }
@@ -29,10 +29,34 @@ pub(crate) enum Record<'a> {
     */
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct PagePointer {
     pub(crate) page_id: u16,
     pub(crate) file_id: u16,
+}
+
+impl PagePointer {
+    pub(crate) fn with_page_id(&self, page_id: u16) -> Self {
+        Self {
+            page_id,
+            file_id: self.file_id,
+        }
+    }
+}
+
+impl TryFrom<&[u8]> for PagePointer {
+    type Error = &'static str;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if bytes.len() != 6 {
+            return Err("Page pointer must be 6 bytes.");
+        }
+
+        Ok(Self {
+            page_id: (&bytes[0..4]).read_u16::<LittleEndian>().unwrap(),
+            file_id: (&bytes[4..6]).read_u16::<LittleEndian>().unwrap(),
+        })
+    }
 }
 
 /// Converts the bytes into an `BootPage`.
@@ -55,10 +79,7 @@ impl TryFrom<[u8; 8192]> for BootPage {
         let (s, _, _) = encoding_rs::UTF_16LE.decode(&bytes[148..(404)]);
         let database_name = String::from_iter(s.chars().filter(|c| *c != '†'));
 
-        let first_sys_indexes = PagePointer {
-            page_id: (&bytes[612..616]).read_u16::<LittleEndian>().unwrap(),
-            file_id: (&bytes[616..618]).read_u16::<LittleEndian>().unwrap(),
-        };
+        let first_sys_indexes = PagePointer::try_from(&bytes[612..618])?;
 
         Ok(Self {
             header,
@@ -92,6 +113,7 @@ impl TryFrom<&[u8]> for PageHeader {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Page {
     header: PageHeader,
     bytes: [u8; 8192],
