@@ -1,6 +1,5 @@
 use crate::pages::{BootPage, PagePointer, Record};
 use crate::PageReader;
-use byteorder::{LittleEndian, ReadBytesExt};
 use std::convert::TryFrom;
 
 pub(crate) struct BaseTableData {
@@ -22,9 +21,7 @@ impl BaseTableData {
         let sysalloc_units = page
             .records()
             .into_iter()
-            .map(|record| match record {
-                Record::Primary(bytes) => SysallocUnit::try_from(bytes),
-            })
+            .map(SysallocUnit::try_from)
             .filter_map(Result::ok)
             .collect::<Vec<_>>();
 
@@ -38,9 +35,7 @@ impl BaseTableData {
         let sysrow_sets = page
             .records()
             .into_iter()
-            .map(|record| match record {
-                Record::Primary(bytes) => SysrowSet::try_from(bytes),
-            })
+            .map(SysrowSet::try_from)
             .filter_map(Result::ok)
             .collect::<Vec<_>>();
 
@@ -56,15 +51,11 @@ impl BaseTableData {
             .and_then(|unit| PagePointer::try_from(&unit.pgfirst[..]).ok())
             .unwrap();
 
-        println!("page: {:?}", sysschobj_page_pointer);
-
         let page = page_reader.read_page(&sysschobj_page_pointer).await?;
         let sysschobjs = page
             .records()
             .into_iter()
-            .map(|record| match record {
-                Record::Primary(bytes) => Sysschobj::try_from(bytes),
-            })
+            .map(Sysschobj::try_from)
             .filter_map(Result::ok)
             .collect::<Vec<_>>();
 
@@ -89,38 +80,27 @@ pub(crate) struct SysallocUnit {
     pcused: i64,
     pcdata: i64,
     pcreserved: i64,
-    dbfragid: i32,
+    // TODO dbfragid: i32,
 }
 
-impl TryFrom<&[u8]> for SysallocUnit {
+impl<'a> TryFrom<Record<'a>> for SysallocUnit {
     type Error = &'static str;
 
-    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        if bytes.len() != 73 {
-            // TODO return Err("sysalloc must be 73 bytes");
-        }
+    fn try_from(record: Record<'a>) -> Result<Self, Self::Error> {
+        let (auid, record) = record.parse_i64()?;
+        let (r#type, record) = record.parse_i8()?;
+        let (ownerid, record) = record.parse_i64()?;
+        let (status, record) = record.parse_i32()?;
+        let (fgid, record) = record.parse_i16()?;
 
-        let mut bytes = &bytes[4..];
+        let (pgfirst, record) = record.parse_bytes(6)?;
+        let (pgroot, record) = record.parse_bytes(6)?;
+        let (pgfirstiam, record) = record.parse_bytes(6)?;
 
-        let auid = bytes.read_i64::<LittleEndian>().unwrap();
-        let r#type = bytes.read_i8().unwrap();
-        let ownerid = bytes.read_i64::<LittleEndian>().unwrap();
-        let status = bytes.read_i32::<LittleEndian>().unwrap();
-        let fgid = bytes.read_i16::<LittleEndian>().unwrap();
-
-        let pgfirst = (&bytes[0..6]).to_vec();
-        let bytes = &bytes[6..];
-
-        let pgroot = (&bytes[0..6]).to_vec();
-        let bytes = &bytes[6..];
-
-        let pgfirstiam = (&bytes[0..6]).to_vec();
-        let mut bytes = &bytes[6..];
-
-        let pcused = bytes.read_i64::<LittleEndian>().unwrap();
-        let pcdata = bytes.read_i64::<LittleEndian>().unwrap();
-        let pcreserved = bytes.read_i64::<LittleEndian>().unwrap();
-        let dbfragid = bytes.read_i32::<LittleEndian>().unwrap();
+        let (pcused, record) = record.parse_i64()?;
+        let (pcdata, record) = record.parse_i64()?;
+        let (pcreserved, _record) = record.parse_i64()?;
+        // TODO let (dbfragid, _record) = record.parse_i32()?;
 
         Ok(Self {
             auid,
@@ -128,13 +108,13 @@ impl TryFrom<&[u8]> for SysallocUnit {
             ownerid,
             status,
             fgid,
-            pgfirst,
-            pgroot,
-            pgfirstiam,
+            pgfirst: pgfirst.to_vec(),
+            pgroot: pgroot.to_vec(),
+            pgfirstiam: pgfirstiam.to_vec(),
             pcused,
             pcdata,
             pcreserved,
-            dbfragid,
+            // TODO dbfragid,
         })
     }
 }
@@ -149,8 +129,8 @@ pub(crate) struct SysrowSet {
     status: i32,
     fgidfs: i16,
     rcrows: i64,
-    cmprlevel: i8,
-    fillfact: i8,
+    // TODO cmprlevel: i8,
+    // TODO fillfact: i8,
     // TODO maxnullbit: i16,
     // TODO maxleaf: i32,
     // TODO maxint: i16,
@@ -161,22 +141,20 @@ pub(crate) struct SysrowSet {
     // TODO dbfragid: i32
 }
 
-impl TryFrom<&[u8]> for SysrowSet {
+impl<'a> TryFrom<Record<'a>> for SysrowSet {
     type Error = &'static str;
 
-    fn try_from(bytes: &[u8]) -> std::result::Result<Self, Self::Error> {
-        let mut bytes = &bytes[4..];
-
-        let rowsetid = bytes.read_i64::<LittleEndian>().unwrap();
-        let ownertype = bytes.read_i8().unwrap();
-        let idmajor = bytes.read_i32::<LittleEndian>().unwrap();
-        let idminor = bytes.read_i32::<LittleEndian>().unwrap();
-        let numpart = bytes.read_i32::<LittleEndian>().unwrap();
-        let status = bytes.read_i32::<LittleEndian>().unwrap();
-        let fgidfs = bytes.read_i16::<LittleEndian>().unwrap();
-        let rcrows = bytes.read_i64::<LittleEndian>().unwrap();
-        let cmprlevel = bytes.read_i8().unwrap();
-        let fillfact = bytes.read_i8().unwrap();
+    fn try_from(record: Record<'a>) -> Result<Self, Self::Error> {
+        let (rowsetid, record) = record.parse_i64()?;
+        let (ownertype, record) = record.parse_i8()?;
+        let (idmajor, record) = record.parse_i32()?;
+        let (idminor, record) = record.parse_i32()?;
+        let (numpart, record) = record.parse_i32()?;
+        let (status, record) = record.parse_i32()?;
+        let (fgidfs, record) = record.parse_i16()?;
+        let (rcrows, _record) = record.parse_i64()?;
+        // TODO let (cmprlevel, record) = record.parse_i8()?;
+        // TODO let (fillfact, _record) = record.parse_i8()?;
 
         // TODO let maxnullbit = bytes.read_i16::<LittleEndian>().unwrap();
         // TODO let maxleaf = bytes.read_i32::<LittleEndian>().unwrap();
@@ -193,8 +171,8 @@ impl TryFrom<&[u8]> for SysrowSet {
             status,
             fgidfs,
             rcrows,
-            cmprlevel,
-            fillfact,
+            // TODO cmprlevel,
+            // TODO fillfact,
         })
     }
 }
@@ -202,10 +180,10 @@ impl TryFrom<&[u8]> for SysrowSet {
 #[derive(Debug)]
 pub(crate) struct Sysschobj {
     id: i32,
-    // TODO name: sysname,
-    // nsid: i32,
-    // nsclass: i8,
-    // status: i32,
+    name: String,
+    nsid: i32,
+    nsclass: i8,
+    status: i32,
     // TODO type: char(2),
     // pid: i32,
     // pclass: i8,
@@ -214,18 +192,23 @@ pub(crate) struct Sysschobj {
     // TODO modified: datetime,
 }
 
-impl TryFrom<&[u8]> for Sysschobj {
+impl<'a> TryFrom<Record<'a>> for Sysschobj {
     type Error = &'static str;
 
-    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        let mut bytes = &bytes[4..];
+    fn try_from(record: Record<'a>) -> Result<Self, Self::Error> {
+        let (id, record) = record.parse_i32()?;
+        let (name, record) = record.parse_string()?;
+        let (nsid, record) = record.parse_i32()?;
+        let (nsclass, record) = record.parse_i8()?;
+        let (status, _record) = record.parse_i32()?;
 
-        let id = bytes.read_i32::<LittleEndian>().unwrap();
-
-        // TODO: continue here by parsing the field name.
-        // requires the parsing of NVarChar, refer to GetPhysicalColumnBytes in OrcaMDF
-
-        Ok(Self { id })
+        Ok(Self {
+            id,
+            name,
+            nsid,
+            nsclass,
+            status,
+        })
     }
 }
 

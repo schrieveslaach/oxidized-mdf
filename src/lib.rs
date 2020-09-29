@@ -4,7 +4,7 @@ mod pages;
 mod sys;
 
 use crate::pages::{BootPage, Page, PagePointer};
-use crate::sys::{BaseTableData, SysallocUnit};
+use crate::sys::BaseTableData;
 use async_std::fs::File;
 use async_std::io::{Read, Result};
 use async_std::path::{Path, PathBuf};
