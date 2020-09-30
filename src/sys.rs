@@ -65,6 +65,16 @@ impl BaseTableData {
             sysschobjs,
         })
     }
+
+    fn objects_dollar(&self) -> impl Iterator<Item = &Sysschobj> {
+        self.sysschobjs
+            .iter()
+            .filter(|o| o.nsclass == 0 && o.pclass == 1)
+    }
+
+    pub(crate) fn tables(&self) -> Vec<String> {
+        self.objects_dollar().map(|o| o.name.clone()).collect()
+    }
 }
 
 #[derive(Debug)]
@@ -184,9 +194,9 @@ pub(crate) struct Sysschobj {
     nsid: i32,
     nsclass: i8,
     status: i32,
-    // TODO type: char(2),
-    // pid: i32,
-    // pclass: i8,
+    r#type: String,
+    pid: i32,
+    pclass: i8,
     // intprop: i32,
     // TODO created: datetime,
     // TODO modified: datetime,
@@ -200,7 +210,13 @@ impl<'a> TryFrom<Record<'a>> for Sysschobj {
         let (name, record) = record.parse_string()?;
         let (nsid, record) = record.parse_i32()?;
         let (nsclass, record) = record.parse_i8()?;
-        let (status, _record) = record.parse_i32()?;
+        let (status, record) = record.parse_i32()?;
+
+        let (r#type, record) = record.parse_bytes(2)?;
+        let r#type = String::from_utf8(r#type.to_vec()).unwrap();
+
+        let (pid, record) = record.parse_i32()?;
+        let (pclass, _record) = record.parse_i8()?;
 
         Ok(Self {
             id,
@@ -208,6 +224,9 @@ impl<'a> TryFrom<Record<'a>> for Sysschobj {
             nsid,
             nsclass,
             status,
+            r#type,
+            pid,
+            pclass,
         })
     }
 }

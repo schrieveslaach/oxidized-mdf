@@ -1,3 +1,7 @@
+//! # A Crate for Parsing MDF files
+//!
+//! `oxidized-mdf` provides utifities to parse MDF files of the [Microsoft SQL Server](https://en.wikipedia.org/wiki/Microsoft_SQL_Server).
+
 #![warn(rust_2018_idioms)]
 
 mod pages;
@@ -52,8 +56,23 @@ impl MdfDatabase {
         })
     }
 
-    pub fn database_name(&self) -> &String {
+    pub fn database_name(&self) -> &str {
         &self.boot_page.database_name
+    }
+
+    /// Returns the table names of this database file.
+    /// 
+    /// ```rust
+    /// # use oxidized_mdf::MdfDatabase;
+    /// # #[async_std::main]
+    /// # async fn main() {
+    /// let db = MdfDatabase::open("data/AWLT2005.mdf").await.unwrap();
+    /// let table_names = db.table_names();
+    /// assert!(table_names.contains(&String::from("CK_Product_ListPrice")));
+    /// # }
+    /// ```
+    pub fn table_names(&self) -> Vec<String> {
+        self.base_table_data.tables()
     }
 }
 
