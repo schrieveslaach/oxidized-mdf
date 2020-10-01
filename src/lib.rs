@@ -16,6 +16,7 @@ use async_std::prelude::*;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::pin::Pin;
+use std::rc::Rc;
 
 pub struct MdfDatabase {
     page_reader: PageReader,
@@ -79,7 +80,7 @@ impl MdfDatabase {
 struct PageReader {
     read: Pin<Box<dyn Read>>,
     page_index: u16,
-    page_cache: HashMap<PagePointer, Page>,
+    page_cache: HashMap<PagePointer, Rc<Page>>,
 }
 
 impl PageReader {
@@ -97,7 +98,7 @@ impl PageReader {
         Ok(())
     }
 
-    async fn read_page(&mut self, page_pointer: &PagePointer) -> Result<Page> {
+    async fn read_page(&mut self, page_pointer: &PagePointer) -> Result<Rc<Page>> {
         if let Some(page) = self.page_cache.get(page_pointer) {
             return Ok(page.clone());
         }
@@ -110,7 +111,7 @@ impl PageReader {
 
             let page = Page::try_from(buffer).unwrap();
 
-            self.page_cache.insert(page_pointer.with_page_id(i), page);
+            self.page_cache.insert(page_pointer.with_page_id(i), Rc::new(page));
         }
 
         let page = self.page_cache.get(page_pointer).unwrap();
