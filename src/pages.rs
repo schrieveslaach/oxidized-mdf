@@ -5,14 +5,13 @@ use std::iter::FromIterator;
 #[derive(Clone, Debug)]
 pub(crate) struct PageHeader {
     pub(crate) slot_count: u16,
+    pub(crate) next_page_pointer: Option<PagePointer>,
 }
 
 pub struct BootPage {
     pub(crate) header: PageHeader,
     pub(crate) database_name: String,
     pub(crate) first_sys_indexes: PagePointer,
-
-    bytes: [u8; 8192],
 }
 
 #[derive(Debug)]
@@ -167,7 +166,14 @@ impl<'a> Record<'a> {
     }
 
     pub(crate) fn parse_string(self) -> Result<(String, Record<'a>), &'static str> {
-        let mut it = self.variable_columns.unwrap().into_iter();
+        let columns = match self.variable_columns {
+            Some(columns) => columns,
+            None => {
+                return Err("no variable column data");
+            }
+        };
+
+        let mut it = columns.into_iter();
 
         let first = it.next().unwrap();
 
@@ -184,7 +190,7 @@ impl<'a> Record<'a> {
     }
 }
 
-#[derive(Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct PagePointer {
     pub(crate) page_id: u16,
     pub(crate) file_id: u16,
@@ -240,7 +246,6 @@ impl TryFrom<[u8; 8192]> for BootPage {
             header,
             database_name,
             first_sys_indexes,
-            bytes,
         })
     }
 }
@@ -251,6 +256,8 @@ impl TryFrom<[u8; 8192]> for BootPage {
 /// Bytes       Content
 /// -----       -------
 /// ...         ?
+//  16-19       NextPageID (int)
+/// 20-21       NextPageFileID (smallint)
 /// 22-23       SlotCnt (smallint)
 /// ...         ?
 /// ```
@@ -262,8 +269,16 @@ impl TryFrom<&[u8]> for PageHeader {
             return Err("Page header must be 96 bytes.");
         }
 
+        let next_page_pointer = PagePointer::try_from(&bytes[16..22])?;
+        let next_page_pointer = if next_page_pointer.page_id > 0 {
+            Some(next_page_pointer)
+        } else {
+            None
+        };
+
         Ok(PageHeader {
             slot_count: (&bytes[22..24]).read_u16::<LittleEndian>().unwrap(),
+            next_page_pointer,
         })
     }
 }
@@ -304,6 +319,10 @@ impl Page {
             }
         }
         records
+    }
+
+    pub(crate) fn next_page_pointer(&self) -> Option<&PagePointer> {
+        self.header.next_page_pointer.as_ref()
     }
 }
 

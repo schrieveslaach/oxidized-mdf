@@ -19,18 +19,35 @@ macro_rules! parse_from_sysrow_set {
     ( $page_reader:expr, $sysrow_sets:expr, $sysalloc_units:expr, $t:ty ) => {{
         let rowset_id = $sysrow_sets.map(|row| row.rowsetid).unwrap();
 
-        let sysschobj_page_pointer = $sysalloc_units
+        let mut page_pointer = $sysalloc_units
             .iter()
             .find(|unit| unit.auid == rowset_id && unit.r#type == 1)
             .and_then(|unit| PagePointer::try_from(&unit.pgfirst[..]).ok())
             .unwrap();
 
-        let page = $page_reader.read_page(&sysschobj_page_pointer).await?;
-        page.records()
-            .into_iter()
-            .map(<$t>::try_from)
-            .filter_map(Result::ok)
-            .collect::<Vec<_>>()
+        let mut parsed_records = Vec::new();
+
+        // TODO: move this code to the page reader: a method that returns an iterator that
+        // returns the next records.
+        loop {
+            let page = $page_reader.read_page(&page_pointer).await?;
+            parsed_records.extend(
+                page.records()
+                    .into_iter()
+                    .map(<$t>::try_from)
+                    .filter_map(Result::ok)
+                    .collect::<Vec<_>>(),
+            );
+
+            page_pointer = match page.next_page_pointer().cloned() {
+                Some(next) => next,
+                None => {
+                    break;
+                }
+            }
+        }
+
+        parsed_records
     }};
 }
 
@@ -105,12 +122,34 @@ impl BaseTableData {
     }
 
     pub(crate) fn tables(&self) -> Vec<String> {
-        self.objects_dollar().map(|o| o.name.clone()).collect()
+        self.objects_dollar()
+            .filter(|o| o.r#type == "U")
+            .map(|o| o.name.clone())
+            .collect()
+    }
+
+    pub(crate) fn columns(&self, table_name: &str) -> Option<Vec<Column>> {
+        let table = self.objects_dollar().find(|o| o.name == table_name)?;
+
+        Some(
+            self.syscolpars
+                .iter()
+                .filter(|c| c.number == 0 && c.id == table.id)
+                .map(|c| Column {
+                    name: c.name.clone(),
+                })
+                .collect(),
+        )
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct SysallocUnit {
+pub(crate) struct Column {
+    pub(crate) name: String,
+}
+
+#[derive(Debug)]
+struct SysallocUnit {
     auid: i64,
     r#type: i8,
     ownerid: i64,
@@ -162,7 +201,7 @@ impl<'a> TryFrom<Record<'a>> for SysallocUnit {
 }
 
 #[derive(Debug)]
-pub(crate) struct SysrowSet {
+struct SysrowSet {
     rowsetid: i64,
     ownertype: i8,
     idmajor: i32,
@@ -220,7 +259,7 @@ impl<'a> TryFrom<Record<'a>> for SysrowSet {
 }
 
 #[derive(Debug)]
-pub(crate) struct Sysschobj {
+struct Sysschobj {
     id: i32,
     name: String,
     nsid: i32,
@@ -245,7 +284,10 @@ impl<'a> TryFrom<Record<'a>> for Sysschobj {
         let (status, record) = record.parse_i32()?;
 
         let (r#type, record) = record.parse_bytes(2)?;
-        let r#type = String::from_utf8(r#type.to_vec()).unwrap();
+        let r#type = String::from_utf8(r#type.to_vec())
+            .unwrap()
+            .trim()
+            .to_string();
 
         let (pid, record) = record.parse_i32()?;
         let (pclass, _record) = record.parse_i8()?;
@@ -264,7 +306,7 @@ impl<'a> TryFrom<Record<'a>> for Sysschobj {
 }
 
 #[derive(Debug)]
-pub(crate) struct Sysscalartype {
+struct Sysscalartype {
     id: i32,
     schid: i32,
     name: String,
@@ -308,7 +350,8 @@ impl<'a> TryFrom<Record<'a>> for Sysscalartype {
     }
 }
 
-pub(crate) struct Syscolpar {
+#[derive(Debug)]
+struct Syscolpar {
     id: i32,
     number: i16,
     colid: i32,

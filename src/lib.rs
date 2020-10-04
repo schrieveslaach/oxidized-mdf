@@ -69,11 +69,32 @@ impl MdfDatabase {
     /// # async fn main() {
     /// let db = MdfDatabase::open("data/AWLT2005.mdf").await.unwrap();
     /// let table_names = db.table_names();
-    /// assert!(table_names.contains(&String::from("CK_Product_ListPrice")));
+    /// assert!(table_names.contains(&String::from("Customer")));
     /// # }
     /// ```
     pub fn table_names(&self) -> Vec<String> {
         self.base_table_data.tables()
+    }
+
+    /// Returns the column names of the given table name.
+    /// 
+    /// ```rust
+    /// # use oxidized_mdf::MdfDatabase;
+    /// # #[async_std::main]
+    /// # async fn main() {
+    /// let db = MdfDatabase::open("data/AWLT2005.mdf").await.unwrap();
+    /// let column_names = db.column_names("Address").unwrap();
+    /// assert!(column_names.contains(&String::from("City")));
+    /// # }
+    /// ```
+    pub fn column_names(&self, table_name: &str) -> Option<Vec<String>> {
+        Some(
+            self.base_table_data
+                .columns(table_name)?
+                .into_iter()
+                .map(|c| c.name)
+                .collect(),
+        )
     }
 }
 
@@ -103,7 +124,7 @@ impl PageReader {
             return Ok(page.clone());
         }
 
-        assert!(self.page_index < page_pointer.page_id, "Currently the database supports only forward reading and the requested page {} has been already read", page_pointer.page_id);
+        assert!(self.page_index <= page_pointer.page_id, "Currently the database supports only forward reading and the requested page {} has been already read", page_pointer.page_id);
 
         for i in self.page_index..=page_pointer.page_id {
             let mut buffer = [0u8; 8192];
