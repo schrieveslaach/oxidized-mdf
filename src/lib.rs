@@ -62,7 +62,7 @@ impl MdfDatabase {
     }
 
     /// Returns the table names of this database file.
-    /// 
+    ///
     /// ```rust
     /// # use oxidized_mdf::MdfDatabase;
     /// # #[async_std::main]
@@ -111,7 +111,8 @@ impl PageReader {
 
             let page = Page::try_from(buffer).unwrap();
 
-            self.page_cache.insert(page_pointer.with_page_id(i), Rc::new(page));
+            self.page_cache
+                .insert(page_pointer.with_page_id(i), Rc::new(page));
         }
 
         let page = self.page_cache.get(page_pointer).unwrap();

@@ -6,14 +6,35 @@ pub(crate) struct BaseTableData {
     sysalloc_units: Vec<SysallocUnit>,
     sysrow_sets: Vec<SysrowSet>,
     sysschobjs: Vec<Sysschobj>,
+    sysscalartypes: Vec<Sysscalartype>,
 }
 
 const SYSROWEST_AUID: i64 = 327680;
 const SYSSCHOBJS_IDMAJOR: i32 = 34;
+const SYSSCALARTYPE_IDMAJOR: i32 = 50;
+
+macro_rules! parse_from_sysrow_set {
+    ( $page_reader:expr, $sysrow_sets:expr, $sysalloc_units:expr, $t:ty ) => {{
+        let rowset_id = $sysrow_sets.map(|row| row.rowsetid).unwrap();
+
+        let sysschobj_page_pointer = $sysalloc_units
+            .iter()
+            .find(|unit| unit.auid == rowset_id && unit.r#type == 1)
+            .and_then(|unit| PagePointer::try_from(&unit.pgfirst[..]).ok())
+            .unwrap();
+
+        let page = $page_reader.read_page(&sysschobj_page_pointer).await?;
+        page.records()
+            .into_iter()
+            .map(<$t>::try_from)
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>()
+    }};
+}
 
 impl BaseTableData {
     pub(crate) async fn parse(
-        page_reader: &mut PageReader,
+        mut page_reader: &mut PageReader,
         boot_page: &BootPage,
     ) -> async_std::io::Result<Self> {
         let page = page_reader.read_page(&boot_page.first_sys_indexes).await?;
@@ -39,30 +60,29 @@ impl BaseTableData {
             .filter_map(Result::ok)
             .collect::<Vec<_>>();
 
-        let rowset_id = sysrow_sets
-            .iter()
-            .find(|row| row.idmajor == SYSSCHOBJS_IDMAJOR && row.idminor == 1)
-            .map(|row| row.rowsetid)
-            .unwrap();
+        let sysschobjs = parse_from_sysrow_set!(
+            &mut page_reader,
+            &sysrow_sets
+                .iter()
+                .find(|row| row.idmajor == SYSSCHOBJS_IDMAJOR && row.idminor == 1),
+            &sysalloc_units,
+            Sysschobj
+        );
 
-        let sysschobj_page_pointer = sysalloc_units
-            .iter()
-            .find(|unit| unit.auid == rowset_id && unit.r#type == 1)
-            .and_then(|unit| PagePointer::try_from(&unit.pgfirst[..]).ok())
-            .unwrap();
-
-        let page = page_reader.read_page(&sysschobj_page_pointer).await?;
-        let sysschobjs = page
-            .records()
-            .into_iter()
-            .map(Sysschobj::try_from)
-            .filter_map(Result::ok)
-            .collect::<Vec<_>>();
+        let sysscalartypes = parse_from_sysrow_set!(
+            &mut page_reader,
+            &sysrow_sets
+                .iter()
+                .find(|row| row.idmajor == SYSSCALARTYPE_IDMAJOR && row.idminor == 1),
+            &sysalloc_units,
+            Sysscalartype
+        );
 
         Ok(Self {
             sysalloc_units,
             sysrow_sets,
             sysschobjs,
+            sysscalartypes,
         })
     }
 
@@ -227,6 +247,51 @@ impl<'a> TryFrom<Record<'a>> for Sysschobj {
             r#type,
             pid,
             pclass,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Sysscalartype {
+    id: i32,
+    schid: i32,
+    name: String,
+    xtype: i8,
+    length: i16,
+    prec: i8,
+    scale: i8,
+    collationid: i32,
+    status: i32,
+    // created: datetime
+    // modified: datetime
+    // dflt: int
+    //chk: int
+}
+
+impl<'a> TryFrom<Record<'a>> for Sysscalartype {
+    type Error = &'static str;
+
+    fn try_from(record: Record<'a>) -> Result<Self, Self::Error> {
+        let (id, record) = record.parse_i32()?;
+        let (schid, record) = record.parse_i32()?;
+        let (name, record) = record.parse_string()?;
+        let (xtype, record) = record.parse_i8()?;
+        let (length, record) = record.parse_i16()?;
+        let (prec, record) = record.parse_i8()?;
+        let (scale, record) = record.parse_i8()?;
+        let (collationid, record) = record.parse_i32()?;
+        let (status, _record) = record.parse_i32()?;
+
+        Ok(Self {
+            id,
+            schid,
+            name,
+            xtype,
+            length,
+            prec,
+            scale,
+            collationid,
+            status,
         })
     }
 }
