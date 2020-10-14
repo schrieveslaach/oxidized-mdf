@@ -1,5 +1,6 @@
 use async_std::io::Result;
-use oxidized_mdf::MdfDatabase;
+use futures_lite::stream::StreamExt;
+use oxidized_mdf::{MdfDatabase, Value};
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 
@@ -49,6 +50,32 @@ async fn columns(file: &str, table_name: &str, column_names: Vec<&str>) -> Resul
     columns.sort();
 
     assert_eq!(columns, column_names);
+
+    Ok(())
+}
+
+#[rstest(
+    file,
+    table_name,
+    column,
+    value,
+    case(
+        "AWLT2005.mdf",
+        "Address",
+        "AddressLine1",
+        "8713 Yosemite Ct.BothellWashingtonUnited S"
+    )
+)]
+#[async_std::test]
+async fn rows(file: &str, table_name: &str, column: &str, value: &str) -> Result<()> {
+    let mut db = MdfDatabase::open(format!("data/{}", file)).await?;
+
+    let mut rows = db.rows(table_name).unwrap();
+    let first_row = rows.next().await.unwrap().unwrap();
+    assert_eq!(
+        first_row.value(column),
+        Some(&Value::String(value.to_string()))
+    );
 
     Ok(())
 }

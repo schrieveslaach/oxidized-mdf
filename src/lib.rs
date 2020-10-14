@@ -13,6 +13,8 @@ use async_std::fs::File;
 use async_std::io::{Read, Result};
 use async_std::path::{Path, PathBuf};
 use async_std::prelude::*;
+use core::task::{Context, Poll};
+use futures_lite::stream::StreamExt;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::pin::Pin;
@@ -33,11 +35,10 @@ impl MdfDatabase {
         path.push(p);
 
         let file = File::open(&path).await?;
-        let read = Box::pin(file);
-        Self::from_read(read).await
+        Self::from_read(Box::new(file)).await
     }
 
-    pub async fn from_read(read: Pin<Box<dyn Read>>) -> Result<Self> {
+    pub async fn from_read(read: Box<dyn Read + Unpin>) -> Result<Self> {
         let mut buffer = [0u8; 8192];
         let mut page_reader = PageReader::new(read);
 
@@ -77,12 +78,13 @@ impl MdfDatabase {
     }
 
     /// Returns the column names of the given table name.
-    /// 
+    ///
     /// ```rust
     /// # use oxidized_mdf::MdfDatabase;
     /// # #[async_std::main]
     /// # async fn main() {
     /// let db = MdfDatabase::open("data/AWLT2005.mdf").await.unwrap();
+    ///
     /// let column_names = db.column_names("Address").unwrap();
     /// assert!(column_names.contains(&String::from("City")));
     /// # }
@@ -90,22 +92,104 @@ impl MdfDatabase {
     pub fn column_names(&self, table_name: &str) -> Option<Vec<String>> {
         Some(
             self.base_table_data
-                .columns(table_name)?
+                .table(table_name)?
+                .columns
                 .into_iter()
-                .map(|c| c.name)
+                .map(|c| c.name.to_string())
                 .collect(),
+        )
+    }
+
+    /// Returns a stream of the rows in the given table.
+    ///
+    /// ```rust
+    /// use oxidized_mdf::{MdfDatabase, Value};
+    /// use async_std::stream::StreamExt;
+    ///
+    /// # #[async_std::main]
+    /// # async fn main() {
+    /// let mut db = MdfDatabase::open("data/AWLT2005.mdf").await.unwrap();
+    /// let mut rows = db.rows("Address").unwrap();
+    /// let first_row = rows.next().await.unwrap().unwrap();
+    ///
+    /// assert_eq!(
+    ///     first_row.value("AddressLine1").cloned(),
+    ///     Some(Value::String(String::from("8713 Yosemite Ct.BothellWashingtonUnited S")))
+    /// );
+    /// # }
+    /// ```
+    pub fn rows<'a, 'b: 'a>(
+        &'b mut self,
+        table_name: &str,
+    ) -> Option<impl Stream<Item = std::result::Result<Row, &'static str>> + 'a> {
+        let table = self.base_table_data.table(table_name)?;
+
+        let page_pointers = table.page_pointers();
+        Some(
+            self.page_reader
+                .read_pages(page_pointers)
+                .flat_map(move |page| {
+                    let mut rows = Vec::new();
+
+                    for mut record in page.unwrap().records().into_iter() {
+                        let mut columns = HashMap::new();
+                        for column in &table.columns {
+                            record = match column.r#type {
+                                "int" => {
+                                    let (int, r) = record.parse_i32().unwrap();
+                                    columns.insert(column.name.to_string(), Value::Int(int));
+                                    r
+                                }
+                                "nvarchar" => {
+                                    let (string, r) = record.parse_string().unwrap();
+                                    columns.insert(column.name.to_string(), Value::String(string));
+                                    r
+                                }
+                                _ => {
+                                    // TODO: handle type
+                                    println!(
+                                        "---> {} not yet supported for column {} (record: {:?})",
+                                        &column.r#type, &column.name, &record
+                                    );
+                                    record
+                                }
+                            };
+                        }
+
+                        rows.push(Ok(Row { columns }));
+                    }
+
+                    futures_lite::stream::iter(rows.into_iter())
+                }),
         )
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Value {
+    Int(i32),
+    String(String),
+}
+
+#[derive(Debug)]
+pub struct Row {
+    columns: HashMap<String, Value>,
+}
+
+impl Row {
+    pub fn value(&self, column_name: &str) -> Option<&Value> {
+        self.columns.get(column_name)
+    }
+}
+
 struct PageReader {
-    read: Pin<Box<dyn Read>>,
+    read: Box<dyn Read + Unpin>,
     page_index: u16,
     page_cache: HashMap<PagePointer, Rc<Page>>,
 }
 
 impl PageReader {
-    fn new(read: Pin<Box<dyn Read>>) -> Self {
+    fn new(read: Box<dyn Read + Unpin>) -> Self {
         Self {
             read,
             page_index: 0,
@@ -138,5 +222,35 @@ impl PageReader {
 
         let page = self.page_cache.get(page_pointer).unwrap();
         Ok(page.clone())
+    }
+
+    fn read_pages<'a, 'b: 'a>(&'b mut self, page_pointers: Vec<PagePointer>) -> PageStream<'a> {
+        PageStream {
+            page_pointers: page_pointers.into_iter(),
+            page_reader: self,
+        }
+    }
+}
+
+struct PageStream<'a> {
+    page_pointers: std::vec::IntoIter<PagePointer>,
+    page_reader: &'a mut PageReader,
+}
+
+impl<'a> Stream for PageStream<'a> {
+    type Item = Result<Rc<Page>>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        mut _ctx: &mut Context<'_>,
+    ) -> Poll<Option<<Self as Stream>::Item>> {
+        match self.page_pointers.next() {
+            Some(page_pointer) => {
+                let f = self.page_reader.read_page(&page_pointer);
+                futures_lite::pin!(f);
+                Poll::Ready(Some(futures_lite::future::block_on(f)))
+            }
+            None => Poll::Ready(None),
+        }
     }
 }

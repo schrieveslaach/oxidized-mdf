@@ -15,6 +15,35 @@ const SYSSCHOBJS_IDMAJOR: i32 = 34;
 const SYSCOLPARS_IDMAJOR: i32 = 41;
 const SYSSCALARTYPE_IDMAJOR: i32 = 50;
 
+macro_rules! parse_page_records {
+    ( $page_reader:expr, $page_pointer:expr, $t:ty ) => {{
+        let mut parsed_records = Vec::new();
+        let mut page_pointer = $page_pointer;
+
+        // TODO: move this code to the page reader: a method that returns an iterator that
+        // returns the next records.
+        loop {
+            let page = $page_reader.read_page(&page_pointer).await?;
+            parsed_records.extend(
+                page.records()
+                    .into_iter()
+                    .map(<$t>::try_from)
+                    .filter_map(Result::ok)
+                    .collect::<Vec<_>>(),
+            );
+
+            page_pointer = match page.next_page_pointer().cloned() {
+                Some(next) => next,
+                None => {
+                    break;
+                }
+            }
+        }
+
+        parsed_records
+    }};
+}
+
 macro_rules! parse_from_sysrow_set {
     ( $page_reader:expr, $sysrow_sets:expr, $sysalloc_units:expr, $t:ty ) => {{
         let rowset_id = $sysrow_sets.map(|row| row.rowsetid).unwrap();
@@ -56,14 +85,11 @@ impl BaseTableData {
         mut page_reader: &mut PageReader,
         boot_page: &BootPage,
     ) -> async_std::io::Result<Self> {
-        let page = page_reader.read_page(&boot_page.first_sys_indexes).await?;
-
-        let sysalloc_units = page
-            .records()
-            .into_iter()
-            .map(SysallocUnit::try_from)
-            .filter_map(Result::ok)
-            .collect::<Vec<_>>();
+        let sysalloc_units = parse_page_records!(
+            &mut page_reader,
+            boot_page.first_sys_indexes.clone(),
+            SysallocUnit
+        );
 
         let sysrowset_page_pointer = sysalloc_units
             .iter()
@@ -128,24 +154,76 @@ impl BaseTableData {
             .collect()
     }
 
-    pub(crate) fn columns(&self, table_name: &str) -> Option<Vec<Column>> {
-        let table = self.objects_dollar().find(|o| o.name == table_name)?;
-
+    pub(crate) fn table<'a, 'b: 'a>(&'b self, table_name: &str) -> Option<Table<'a>> {
         Some(
-            self.syscolpars
-                .iter()
-                .filter(|c| c.number == 0 && c.id == table.id)
-                .map(|c| Column {
-                    name: c.name.clone(),
-                })
-                .collect(),
+            self.objects_dollar()
+                .find(|o| o.name == table_name)
+                .map(|table| Table {
+                    objects_dollar: table,
+                    sysalloc_units: &self.sysalloc_units,
+                    sysrow_sets: &self.sysrow_sets,
+                    columns: self
+                        .syscolpars
+                        .iter()
+                        .filter(|c| c.number == 0 && c.id == table.id)
+                        .map(|c| {
+                            let r#type = self
+                                .sysscalartypes
+                                .iter()
+                                .find(|st| st.xtype == c.xtype)
+                                .map(|st| &st.name)
+                                .expect("Should have type for column");
+
+                            Column {
+                                name: &c.name,
+                                r#type,
+                            }
+                        })
+                        .collect(),
+                })?,
         )
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct Column {
-    pub(crate) name: String,
+pub(crate) struct Table<'a> {
+    objects_dollar: &'a Sysschobj,
+    sysalloc_units: &'a Vec<SysallocUnit>,
+    sysrow_sets: &'a Vec<SysrowSet>,
+    pub(crate) columns: Vec<Column<'a>>,
+}
+
+impl<'a> Table<'a> {
+    pub(crate) fn page_pointers(&self) -> Vec<PagePointer> {
+        let mut partitions = self
+            .sysrow_sets
+            .iter()
+            .filter(|sysrow| sysrow.idmajor == self.objects_dollar.id && sysrow.idminor <= 1)
+            .collect::<Vec<_>>();
+
+        partitions.sort_by_key(|p| p.numpart);
+
+        let mut page_pointers = Vec::new();
+
+        for partition in partitions {
+            if let Some(unit) = self
+                .sysalloc_units
+                .iter()
+                .find(|unit| unit.ownerid == partition.rowsetid && unit.r#type == 1)
+            {
+                let page_pointer = PagePointer::try_from(&unit.pgfirst[..]).unwrap();
+                page_pointers.push(page_pointer);
+            }
+        }
+
+        page_pointers
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Column<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) r#type: &'a str,
 }
 
 #[derive(Debug)]
@@ -522,47 +600,43 @@ mod tests {
                 72057594043498496,
                 72057594043564032,
                 72057594043957248,
-                /* TODO: there are more values in the sysalloc page…
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                720575940,
-                */
+                72057594044612608,
+                72057594044678144,
+                72057594044743680,
+                72057594044809216,
+                72057594044874752,
+                72057594044940288,
+                72057594045005824,
+                72057594045071360,
+                72057594045136896,
+                72057594045202432,
+                72057594045267968,
+                72057594045333504,
+                72057594045399040,
+                72057594045464576,
+                72057594045530112,
+                72057594045595648,
+                72057594045661184,
+                72057594045726720,
+                72057594045792256,
+                72057594045857792,
+                72057594045923328,
+                72057594045988864,
+                72057594046054400,
+                72057594046119936,
+                72057594046185472,
+                72057594046251008,
+                72057594046316544,
+                72057594046382080,
+                72057594046447616,
+                72057594046513152,
+                72057594046578688,
+                72057594046644224,
+                72057594046709760,
+                72057594046775296,
+                72057594046840832,
+                72057594046906368,
+                72057594046971904,
             ]
         );
         Ok(())

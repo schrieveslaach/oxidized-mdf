@@ -283,7 +283,7 @@ impl TryFrom<&[u8]> for PageHeader {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct Page {
     header: PageHeader,
     bytes: [u8; 8192],
