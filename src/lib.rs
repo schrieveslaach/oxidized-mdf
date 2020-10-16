@@ -180,6 +180,10 @@ impl Row {
     pub fn value(&self, column_name: &str) -> Option<&Value> {
         self.columns.get(column_name)
     }
+
+    pub fn values(self) -> Vec<(String, Value)> {
+        self.columns.into_iter().collect()
+    }
 }
 
 struct PageReader {
