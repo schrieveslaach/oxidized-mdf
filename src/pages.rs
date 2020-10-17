@@ -175,7 +175,12 @@ impl<'a> Record<'a> {
 
         let mut it = columns.into_iter();
 
-        let first = it.next().unwrap();
+        let first = match it.next() {
+            Some(first) => first,
+            None => {
+                return Err("No more variable data available.");
+            }
+        };
 
         let (s, _, _) = encoding_rs::UTF_16LE.decode(first);
         let s = s.into_owned();

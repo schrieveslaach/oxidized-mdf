@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate prettytable;
-
 use futures_lite::stream::StreamExt;
 use oxidized_mdf::MdfDatabase;
 use prettytable::{Cell, Row, Table};

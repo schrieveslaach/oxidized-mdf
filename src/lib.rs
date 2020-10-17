@@ -7,15 +7,15 @@
 mod pages;
 mod sys;
 
-use crate::pages::{BootPage, Page, PagePointer};
-use crate::sys::BaseTableData;
+use crate::pages::{BootPage, Page, PagePointer, Record};
+use crate::sys::{BaseTableData, Column};
 use async_std::fs::File;
 use async_std::io::{Read, Result};
 use async_std::path::{Path, PathBuf};
 use async_std::prelude::*;
 use core::task::{Context, Poll};
 use futures_lite::stream::StreamExt;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::pin::Pin;
 use std::rc::Rc;
@@ -131,29 +131,21 @@ impl MdfDatabase {
                 .flat_map(move |page| {
                     let mut rows = Vec::new();
 
-                    for mut record in page.unwrap().records().into_iter() {
-                        let mut columns = HashMap::new();
+                    for record in page.unwrap().records().into_iter() {
+                        let mut columns = BTreeMap::new();
+
+                        let mut record = Some(record);
                         for column in &table.columns {
-                            record = match column.r#type {
-                                "int" => {
-                                    let (int, r) = record.parse_i32().unwrap();
-                                    columns.insert(column.name.to_string(), Value::Int(int));
-                                    r
-                                }
-                                "nvarchar" => {
-                                    let (string, r) = record.parse_string().unwrap();
-                                    columns.insert(column.name.to_string(), Value::String(string));
-                                    r
-                                }
-                                _ => {
-                                    // TODO: handle type
-                                    println!(
-                                        "---> {} not yet supported for column {} (record: {:?})",
-                                        &column.r#type, &column.name, &record
-                                    );
-                                    record
+                            let (value, r) = match Value::parse(column, record.take().unwrap()) {
+                                Ok((value, r)) => (value, r),
+                                Err(_e) => {
+                                    break;
                                 }
                             };
+
+                            columns.insert(column.name.to_string(), value);
+
+                            record = Some(r);
                         }
 
                         rows.push(Ok(Row { columns }));
@@ -167,13 +159,48 @@ impl MdfDatabase {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Value {
+    TinyInt(i8),
+    SmallInt(i16),
     Int(i32),
     String(String),
 }
 
+impl Value {
+    fn parse<'a>(
+        column: &Column<'_>,
+        record: Record<'a>,
+    ) -> std::result::Result<(Self, Record<'a>), &'static str> {
+        match column.r#type {
+            "tinyint" => {
+                let (int, r) = record.parse_i8()?;
+                Ok((Value::TinyInt(int), r))
+            }
+            "smallint" => {
+                let (int, r) = record.parse_i16()?;
+                Ok((Value::SmallInt(int), r))
+            }
+            "int" => {
+                let (int, r) = record.parse_i32()?;
+                Ok((Value::Int(int), r))
+            }
+            "nvarchar" => {
+                let (string, r) = record.parse_string()?;
+                Ok((Value::String(string), r))
+            }
+            _ => {
+                eprintln!(
+                    "---> {} not yet supported for column {} (record: {:?})",
+                    &column.r#type, &column.name, &record
+                );
+                Err("Unknown column type")
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Row {
-    columns: HashMap<String, Value>,
+    columns: BTreeMap<String, Value>,
 }
 
 impl Row {
