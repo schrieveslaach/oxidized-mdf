@@ -13,6 +13,7 @@ use async_std::fs::File;
 use async_std::io::{Read, Result};
 use async_std::path::{Path, PathBuf};
 use async_std::prelude::*;
+use chrono::{DateTime, Utc};
 use core::task::{Context, Poll};
 use futures_lite::stream::StreamExt;
 use std::collections::{BTreeMap, HashMap};
@@ -163,6 +164,7 @@ pub enum Value {
     SmallInt(i16),
     Int(i32),
     String(String),
+    DateTime(DateTime<Utc>),
 }
 
 impl Value {
@@ -171,6 +173,10 @@ impl Value {
         record: Record<'a>,
     ) -> std::result::Result<(Self, Record<'a>), &'static str> {
         match column.r#type {
+            "datetime" => {
+                let (datetime, r) = record.parse_datetime()?;
+                Ok((Value::DateTime(datetime), r))
+            }
             "tinyint" => {
                 let (int, r) = record.parse_i8()?;
                 Ok((Value::TinyInt(int), r))
