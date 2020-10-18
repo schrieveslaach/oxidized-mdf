@@ -165,7 +165,7 @@ impl BaseTableData {
                     columns: self
                         .syscolpars
                         .iter()
-                        .filter(|c| c.number == 0 && c.id == table.id)
+                        .filter(|c| c.number == 0 && c.id == table.id && c.name.is_some())
                         .map(|c| {
                             let r#type = self
                                 .sysscalartypes
@@ -175,7 +175,7 @@ impl BaseTableData {
                                 .expect("Should have type for column");
 
                             Column {
-                                name: &c.name,
+                                name: &c.name.as_ref().unwrap(),
                                 r#type,
                             }
                         })
@@ -433,7 +433,7 @@ struct Syscolpar {
     id: i32,
     number: i16,
     colid: i32,
-    name: String,
+    name: Option<String>,
     xtype: i8,
     utype: i32,
     length: i16,
@@ -455,7 +455,12 @@ impl<'a> TryFrom<Record<'a>> for Syscolpar {
         let (id, record) = record.parse_i32()?;
         let (number, record) = record.parse_i16()?;
         let (colid, record) = record.parse_i32()?;
-        let (name, record) = record.parse_string()?;
+        let (name, record) = if record.has_variable_length_columns() {
+            let (name, record) = record.parse_string()?;
+            (Some(name), record)
+        } else {
+            (None, record)
+        };
         let (xtype, record) = record.parse_i8()?;
         let (utype, record) = record.parse_i32()?;
         let (length, record) = record.parse_i16()?;

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use structopt::StructOpt;
 
 async fn print_rows(db: &mut MdfDatabase, table: &str) {
-    let mut rows = match db.rows(&table){
+    let mut rows = match db.rows(&table) {
         Some(rows) => rows,
         None => {
             eprintln!("No table {}", table);

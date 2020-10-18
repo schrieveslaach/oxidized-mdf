@@ -90,6 +90,10 @@ impl<'a> TryFrom<&'a [u8]> for Record<'a> {
 }
 
 impl<'a> Record<'a> {
+    pub(crate) fn has_variable_length_columns(&self) -> bool {
+        self.variable_columns.is_some()
+    }
+
     fn parse_variable_length_columns<'b>(mut bytes: &'b [u8]) -> Vec<&'b [u8]> {
         let number_of_variable_length_columns = bytes.read_u16::<LittleEndian>().unwrap();
 
