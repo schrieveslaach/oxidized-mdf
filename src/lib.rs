@@ -161,6 +161,7 @@ impl MdfDatabase {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Value {
+    Bit(bool),
     TinyInt(i8),
     SmallInt(i16),
     Int(i32),
@@ -171,6 +172,7 @@ pub enum Value {
 impl Display for Value {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
         match self {
+            Value::Bit(bit) => write!(fmt, "{}", bit),
             Value::TinyInt(i) => write!(fmt, "{}", i),
             Value::SmallInt(i) => write!(fmt, "{}", i),
             Value::Int(i) => write!(fmt, "{}", i),
@@ -186,6 +188,10 @@ impl Value {
         record: Record<'a>,
     ) -> std::result::Result<(Self, Record<'a>), &'static str> {
         match column.r#type {
+            "bit" => {
+                let (bit, r) = record.parse_bit()?;
+                Ok((Value::Bit(bit), r))
+            }
             "datetime" => {
                 let (datetime, r) = record.parse_datetime()?;
                 Ok((Value::DateTime(datetime), r))

@@ -154,6 +154,12 @@ impl<'a> Record<'a> {
         Ok((n, record))
     }
 
+    pub(crate) fn parse_bit(self) -> Result<(bool, Record<'a>), &'static str> {
+        let (bytes, record) = self.parse_bytes(1)?;
+
+        Ok((bytes[0] > 0, record))
+    }
+
     const CLOCK_TICK_MS: f64 = 10.0 / 3.0;
 
     pub(crate) fn parse_datetime(self) -> Result<(DateTime<Utc>, Record<'a>), &'static str> {
