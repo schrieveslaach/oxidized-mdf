@@ -14,6 +14,7 @@ use async_std::io::{Read, Result};
 use async_std::path::{Path, PathBuf};
 use async_std::prelude::*;
 use chrono::{DateTime, Utc};
+use core::fmt::{Display, Formatter};
 use core::task::{Context, Poll};
 use futures_lite::stream::StreamExt;
 use std::collections::{BTreeMap, HashMap};
@@ -165,6 +166,18 @@ pub enum Value {
     Int(i32),
     String(String),
     DateTime(DateTime<Utc>),
+}
+
+impl Display for Value {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        match self {
+            Value::TinyInt(i) => write!(fmt, "{}", i),
+            Value::SmallInt(i) => write!(fmt, "{}", i),
+            Value::Int(i) => write!(fmt, "{}", i),
+            Value::String(s) => write!(fmt, "{}", s),
+            Value::DateTime(d) => write!(fmt, "{}", d),
+        }
+    }
 }
 
 impl Value {

@@ -21,7 +21,7 @@ async fn print_rows(db: &mut MdfDatabase, table: &str) {
 
         let cells = values
             .into_iter()
-            .map(|(_, v)| Cell::new(&format!("{:?}", v)))
+            .map(|(_, v)| Cell::new(&format!("{}", v)))
             .collect::<Vec<_>>();
         pretty_table.add_row(Row::new(cells));
     }
