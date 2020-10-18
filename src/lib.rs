@@ -204,7 +204,7 @@ impl Value {
                 let (int, r) = record.parse_i16()?;
                 Ok((Value::SmallInt(int), r))
             }
-            "int" => {
+            "int" | "money" => {
                 let (int, r) = record.parse_i32()?;
                 Ok((Value::Int(int), r))
             }
