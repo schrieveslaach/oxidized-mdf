@@ -21,6 +21,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::pin::Pin;
 use std::rc::Rc;
+use uuid::Uuid;
 
 pub struct MdfDatabase {
     page_reader: PageReader,
@@ -167,6 +168,7 @@ pub enum Value {
     Int(i32),
     String(String),
     DateTime(DateTime<Utc>),
+    Uuid(Uuid),
 }
 
 impl Display for Value {
@@ -178,6 +180,7 @@ impl Display for Value {
             Value::Int(i) => write!(fmt, "{}", i),
             Value::String(s) => write!(fmt, "{}", s),
             Value::DateTime(d) => write!(fmt, "{}", d),
+            Value::Uuid(uuid) => write!(fmt, "{}", uuid),
         }
     }
 }
@@ -211,6 +214,10 @@ impl Value {
             "nvarchar" => {
                 let (string, r) = record.parse_string()?;
                 Ok((Value::String(string), r))
+            }
+            "uniqueidentifier" => {
+                let (uuid, r) = record.parse_uuid()?;
+                Ok((Value::Uuid(uuid), r))
             }
             _ => {
                 eprintln!(

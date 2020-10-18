@@ -2,6 +2,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use std::convert::TryFrom;
 use std::iter::FromIterator;
+use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub(crate) struct PageHeader {
@@ -158,6 +159,14 @@ impl<'a> Record<'a> {
         Ok((n, record))
     }
 
+    fn parse_u128(self) -> Result<(u128, Record<'a>), &'static str> {
+        let (mut bytes, record) = self.parse_bytes(16)?;
+
+        let n = bytes.read_u128::<LittleEndian>().unwrap();
+
+        Ok((n, record))
+    }
+
     pub(crate) fn parse_bit(self) -> Result<(bool, Record<'a>), &'static str> {
         let (bytes, record) = self.parse_bytes(1)?;
 
@@ -216,6 +225,14 @@ impl<'a> Record<'a> {
         };
 
         Ok((s, record))
+    }
+
+    pub(crate) fn parse_uuid(self) -> Result<(Uuid, Self), &'static str> {
+        let (bytes, record) = self.parse_u128()?;
+
+        let uuid = Uuid::from_u128_le(bytes);
+
+        Ok((uuid, record))
     }
 }
 
@@ -449,6 +466,19 @@ mod tests {
         let record = Record::try_from(&bytes[..]).unwrap();
 
         let (parsed_value, _record) = record.parse_datetime().unwrap();
+
+        assert_eq!(expected_value, parsed_value);
+    }
+
+    #[rstest(
+        bytes,
+        expected_value,
+        case(vec![0u8, 0u8, 20u8, 0u8, 215, 208, 221, 236, 178, 45, 77, 70, 178, 218, 137, 191, 252, 98, 118, 170, 0u8, 0u8], Uuid::from_u128_le(226583458013659211989771997646895829207u128))
+    )]
+    fn parse_uuid(bytes: Vec<u8>, expected_value: Uuid) {
+        let record = Record::try_from(&bytes[..]).unwrap();
+
+        let (parsed_value, _record) = record.parse_uuid().unwrap();
 
         assert_eq!(expected_value, parsed_value);
     }
