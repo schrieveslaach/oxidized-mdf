@@ -97,13 +97,7 @@ impl BaseTableData {
             .and_then(|unit| PagePointer::try_from(&unit.pgfirst[..]).ok())
             .unwrap();
 
-        let page = page_reader.read_page(&sysrowset_page_pointer).await?;
-        let sysrow_sets = page
-            .records()
-            .into_iter()
-            .map(SysrowSet::try_from)
-            .filter_map(Result::ok)
-            .collect::<Vec<_>>();
+        let sysrow_sets = parse_page_records!(&mut page_reader, sysrowset_page_pointer, SysrowSet);
 
         let sysschobjs = parse_from_sysrow_set!(
             &mut page_reader,
