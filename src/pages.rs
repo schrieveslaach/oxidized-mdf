@@ -198,6 +198,18 @@ impl<'a> Record<'a> {
         Ok((bytes, record))
     }
 
+    pub(crate) fn parse_string_from_fixed_bytes(
+        self,
+        len: usize,
+    ) -> Result<(String, Record<'a>), &'static str> {
+        let (bytes, record) = self.parse_bytes(len)?;
+
+        let (s, _, _) = encoding_rs::UTF_8.decode(bytes);
+        let s = s.into_owned();
+
+        Ok((s, record))
+    }
+
     pub(crate) fn parse_string(self) -> Result<(String, Record<'a>), &'static str> {
         let columns = match self.variable_columns {
             Some(columns) => columns,

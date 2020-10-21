@@ -354,13 +354,8 @@ impl<'a> TryFrom<Record<'a>> for Sysschobj {
         let (nsid, record) = record.parse_i32()?;
         let (nsclass, record) = record.parse_i8()?;
         let (status, record) = record.parse_i32()?;
-
-        let (r#type, record) = record.parse_bytes(2)?;
-        let r#type = String::from_utf8(r#type.to_vec())
-            .unwrap()
-            .trim()
-            .to_string();
-
+        let (r#type, record) = record.parse_string_from_fixed_bytes(2)?;
+        let r#type = r#type.trim().to_string();
         let (pid, record) = record.parse_i32()?;
         let (pclass, _record) = record.parse_i8()?;
 
