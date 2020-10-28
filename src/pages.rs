@@ -69,6 +69,10 @@ impl<'a> TryFrom<&'a [u8]> for Record<'a> {
             fixed_length_size - 4
         };
 
+        if fixed_length_size == 0 {
+            todo!("No fixed length data! Record cannot be handled yet");
+        }
+
         let (fixed_bytes, mut bytes) = bytes.split_at(fixed_length_size as usize);
 
         let number_of_columns = bytes.read_u16::<LittleEndian>().unwrap() as usize;
@@ -222,23 +226,14 @@ impl<'a> Record<'a> {
 
 #[derive(Debug)]
 struct VariableColumns<'a> {
-    variable_columns: std::vec::IntoIter<&'a [u8]>,
+    variable_columns: &'a [u8],
+    variable_length_column_lengths: &'a [u8],
     null_bitmap: Option<&'a BitSlice<Lsb0, u8>>,
     index: usize,
 }
 
 impl<'a> VariableColumns<'a> {
-    fn new(bytes: &'a [u8], null_bitmap: Option<&'a [u8]>) -> Self {
-        Self {
-            variable_columns: Self::parse_variable_columns(&bytes),
-            null_bitmap: null_bitmap
-                .map(|null_bitmap| BitSlice::from_slice(null_bitmap))
-                .flatten(),
-            index: 0,
-        }
-    }
-
-    fn parse_variable_columns<'b>(mut bytes: &'b [u8]) -> std::vec::IntoIter<&'b [u8]> {
+    fn new(mut bytes: &'a [u8], null_bitmap: Option<&'a [u8]>) -> Self {
         let number_of_variable_length_columns = bytes.read_u16::<LittleEndian>().unwrap();
 
         /* TODO: from the original coder
@@ -252,22 +247,17 @@ impl<'a> VariableColumns<'a> {
         }
         */
 
-        let mut variable_length_column_lengths =
-            Vec::with_capacity(number_of_variable_length_columns as usize);
-        for _i in 0..number_of_variable_length_columns {
-            variable_length_column_lengths.push(bytes.read_i16::<LittleEndian>().unwrap());
+        let (variable_length_column_lengths, variable_columns) =
+            bytes.split_at(number_of_variable_length_columns as usize * 2);
+
+        Self {
+            variable_columns,
+            variable_length_column_lengths,
+            null_bitmap: null_bitmap
+                .map(|null_bitmap| BitSlice::from_slice(null_bitmap))
+                .flatten(),
+            index: 0,
         }
-
-        let mut colmuns = Vec::with_capacity(number_of_variable_length_columns as usize);
-        for length in variable_length_column_lengths.into_iter() {
-            let length = std::cmp::min(length as usize, bytes.len());
-
-            let (column_bytes, remaining_bytes) = bytes.split_at(length);
-            colmuns.push(column_bytes);
-            bytes = remaining_bytes;
-        }
-
-        colmuns.into_iter()
     }
 }
 
@@ -282,9 +272,20 @@ impl<'a> Iterator for VariableColumns<'a> {
             }
         }
 
+        let (mut length_bytes, variable_length_column_lengths) =
+            self.variable_length_column_lengths.split_at(2);
+        self.variable_length_column_lengths = variable_length_column_lengths;
+
+        let length = std::cmp::min(
+            length_bytes.read_u16::<LittleEndian>().unwrap() as usize,
+            self.variable_columns.len(),
+        );
+        let (bytes, remaining_bytes) = self.variable_columns.split_at(length);
+
+        self.variable_columns = remaining_bytes;
         self.index += 1;
-        let item = self.variable_columns.next()?;
-        Some(Some(item))
+
+        Some(Some(bytes))
     }
 }
 
