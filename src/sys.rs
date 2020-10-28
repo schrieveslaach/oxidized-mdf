@@ -361,7 +361,7 @@ impl<'a> TryFrom<Record<'a>> for Sysschobj {
 
         Ok(Self {
             id,
-            name,
+            name: name.unwrap(),
             nsid,
             nsclass,
             status,
@@ -406,7 +406,7 @@ impl<'a> TryFrom<Record<'a>> for Sysscalartype {
         Ok(Self {
             id,
             schid,
-            name,
+            name: name.unwrap(),
             xtype,
             length,
             prec,
@@ -446,7 +446,7 @@ impl<'a> TryFrom<Record<'a>> for Syscolpar {
         let (colid, record) = record.parse_i32()?;
         let (name, record) = if record.has_variable_length_columns() {
             let (name, record) = record.parse_string()?;
-            (Some(name), record)
+            (Some(name.unwrap()), record)
         } else {
             (None, record)
         };

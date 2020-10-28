@@ -1,5 +1,7 @@
+use bitvec::{order::Lsb0, slice::BitSlice};
 use byteorder::{LittleEndian, ReadBytesExt};
 use chrono::{DateTime, Duration, TimeZone, Utc};
+use core::iter::Iterator;
 use std::convert::TryFrom;
 use std::iter::FromIterator;
 use uuid::Uuid;
@@ -20,7 +22,7 @@ pub struct BootPage {
 pub(crate) struct Record<'a> {
     fixed_bytes: &'a [u8],
     r#type: RecordType,
-    variable_columns: Option<Vec<&'a [u8]>>,
+    variable_columns: Option<VariableColumns<'a>>,
 }
 
 #[derive(Debug)]
@@ -69,15 +71,17 @@ impl<'a> TryFrom<&'a [u8]> for Record<'a> {
 
         let (fixed_bytes, mut bytes) = bytes.split_at(fixed_length_size as usize);
 
-        // Parse number of columns
         let number_of_columns = bytes.read_u16::<LittleEndian>().unwrap() as usize;
 
-        if has_null_bitmap {
-            bytes = &bytes[((number_of_columns + 7) / 8)..];
-        }
+        let (null_bitmap, bytes) = if has_null_bitmap {
+            let (null_bitmap, bytes) = bytes.split_at((number_of_columns + 7) / 8);
+            (Some(null_bitmap), bytes)
+        } else {
+            (None, bytes)
+        };
 
         let variable_columns = if has_variable_length_columns {
-            Some(Self::parse_variable_length_columns(&bytes))
+            Some(VariableColumns::new(bytes, null_bitmap))
         } else {
             None
         };
@@ -93,38 +97,6 @@ impl<'a> TryFrom<&'a [u8]> for Record<'a> {
 impl<'a> Record<'a> {
     pub(crate) fn has_variable_length_columns(&self) -> bool {
         self.variable_columns.is_some()
-    }
-
-    fn parse_variable_length_columns<'b>(mut bytes: &'b [u8]) -> Vec<&'b [u8]> {
-        let number_of_variable_length_columns = bytes.read_u16::<LittleEndian>().unwrap();
-
-        /* TODO: from the original coder
-        // If there is no fixed length data and no null bitmap, only the number of variable length columns is stored.
-        if (FixedLengthData.Length == 0 && !HasNullBitmap)
-            NumberOfVariableLengthColumns = NumberOfColumns;
-        else
-        {
-            NumberOfVariableLengthColumns = BitConverter.ToInt16(bytes, offset);
-            offset += 2;
-        }
-        */
-
-        let mut variable_length_column_lengths =
-            Vec::with_capacity(number_of_variable_length_columns as usize);
-        for _i in 0..number_of_variable_length_columns {
-            variable_length_column_lengths.push(bytes.read_i16::<LittleEndian>().unwrap());
-        }
-
-        let mut colmuns = Vec::with_capacity(number_of_variable_length_columns as usize);
-        for length in variable_length_column_lengths.into_iter() {
-            let length = std::cmp::min(length as usize, bytes.len());
-
-            let (column_bytes, remaining_bytes) = bytes.split_at(length);
-            colmuns.push(column_bytes);
-            bytes = remaining_bytes;
-        }
-
-        colmuns
     }
 
     pub(crate) fn parse_i8(self) -> Result<(i8, Record<'a>), &'static str> {
@@ -210,30 +182,30 @@ impl<'a> Record<'a> {
         Ok((s, record))
     }
 
-    pub(crate) fn parse_string(self) -> Result<(String, Record<'a>), &'static str> {
-        let columns = match self.variable_columns {
+    pub(crate) fn parse_string(self) -> Result<(Option<String>, Record<'a>), &'static str> {
+        let mut variable_columns = match self.variable_columns {
             Some(columns) => columns,
             None => {
                 return Err("no variable column data");
             }
         };
 
-        let mut it = columns.into_iter();
-
-        let first = match it.next() {
+        let first = match variable_columns.next() {
             Some(first) => first,
             None => {
                 return Err("No more variable data available.");
             }
         };
 
-        let (s, _, _) = encoding_rs::UTF_16LE.decode(first);
-        let s = s.into_owned();
+        let s = first.map(|first| {
+            let (s, _, _) = encoding_rs::UTF_16LE.decode(first);
+            s.into_owned()
+        });
 
         let record = Self {
             fixed_bytes: self.fixed_bytes,
             r#type: self.r#type,
-            variable_columns: Some(it.collect()),
+            variable_columns: Some(variable_columns),
         };
 
         Ok((s, record))
@@ -245,6 +217,74 @@ impl<'a> Record<'a> {
         let uuid = Uuid::from_u128_le(bytes);
 
         Ok((uuid, record))
+    }
+}
+
+#[derive(Debug)]
+struct VariableColumns<'a> {
+    variable_columns: std::vec::IntoIter<&'a [u8]>,
+    null_bitmap: Option<&'a BitSlice<Lsb0, u8>>,
+    index: usize,
+}
+
+impl<'a> VariableColumns<'a> {
+    fn new(bytes: &'a [u8], null_bitmap: Option<&'a [u8]>) -> Self {
+        Self {
+            variable_columns: Self::parse_variable_columns(&bytes),
+            null_bitmap: null_bitmap
+                .map(|null_bitmap| BitSlice::from_slice(null_bitmap))
+                .flatten(),
+            index: 0,
+        }
+    }
+
+    fn parse_variable_columns<'b>(mut bytes: &'b [u8]) -> std::vec::IntoIter<&'b [u8]> {
+        let number_of_variable_length_columns = bytes.read_u16::<LittleEndian>().unwrap();
+
+        /* TODO: from the original coder
+        // If there is no fixed length data and no null bitmap, only the number of variable length columns is stored.
+        if (FixedLengthData.Length == 0 && !HasNullBitmap)
+            NumberOfVariableLengthColumns = NumberOfColumns;
+        else
+        {
+            NumberOfVariableLengthColumns = BitConverter.ToInt16(bytes, offset);
+            offset += 2;
+        }
+        */
+
+        let mut variable_length_column_lengths =
+            Vec::with_capacity(number_of_variable_length_columns as usize);
+        for _i in 0..number_of_variable_length_columns {
+            variable_length_column_lengths.push(bytes.read_i16::<LittleEndian>().unwrap());
+        }
+
+        let mut colmuns = Vec::with_capacity(number_of_variable_length_columns as usize);
+        for length in variable_length_column_lengths.into_iter() {
+            let length = std::cmp::min(length as usize, bytes.len());
+
+            let (column_bytes, remaining_bytes) = bytes.split_at(length);
+            colmuns.push(column_bytes);
+            bytes = remaining_bytes;
+        }
+
+        colmuns.into_iter()
+    }
+}
+
+impl<'a> Iterator for VariableColumns<'a> {
+    type Item = Option<&'a [u8]>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(null_bitmap) = self.null_bitmap {
+            if null_bitmap[self.index] {
+                self.index += 1;
+                return Some(None);
+            }
+        }
+
+        self.index += 1;
+        let item = self.variable_columns.next()?;
+        Some(Some(item))
     }
 }
 
@@ -466,7 +506,7 @@ mod tests {
 
         let (parsed_value, _record) = record.parse_string().unwrap();
 
-        assert_eq!(expected_value, parsed_value);
+        assert_eq!(expected_value, parsed_value.unwrap());
     }
 
     #[rstest(

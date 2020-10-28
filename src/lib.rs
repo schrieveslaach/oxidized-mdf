@@ -169,6 +169,7 @@ pub enum Value {
     String(String),
     DateTime(DateTime<Utc>),
     Uuid(Uuid),
+    Null,
 }
 
 impl Display for Value {
@@ -181,6 +182,7 @@ impl Display for Value {
             Value::String(s) => write!(fmt, "{}", s),
             Value::DateTime(d) => write!(fmt, "{}", d),
             Value::Uuid(uuid) => write!(fmt, "{}", uuid),
+            Value::Null => write!(fmt, "null"),
         }
     }
 }
@@ -213,7 +215,7 @@ impl Value {
             }
             "nvarchar" => {
                 let (string, r) = record.parse_string()?;
-                Ok((Value::String(string), r))
+                Ok((string.map_or(Value::Null, Value::String), r))
             }
             "uniqueidentifier" => {
                 let (uuid, r) = record.parse_uuid()?;
