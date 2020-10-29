@@ -272,6 +272,10 @@ impl<'a> Iterator for VariableColumns<'a> {
             }
         }
 
+        if self.variable_length_column_lengths.len() < 2 {
+            return None;
+        }
+
         let (mut length_bytes, variable_length_column_lengths) =
             self.variable_length_column_lengths.split_at(2);
         self.variable_length_column_lengths = variable_length_column_lengths;
@@ -439,6 +443,7 @@ impl TryFrom<[u8; 8192]> for Page {
 mod tests {
     use super::*;
     use rstest::rstest;
+    use pretty_assertions::assert_eq;
 
     #[rstest(
         bytes,
@@ -508,6 +513,19 @@ mod tests {
         let (parsed_value, _record) = record.parse_string().unwrap();
 
         assert_eq!(expected_value, parsed_value.unwrap());
+    }
+
+    #[rstest(
+        bytes,
+        case(vec![0b0010_0000, 0u8, 5u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]),
+    )]
+    fn parse_not_string_due_to_missing_data(bytes: Vec<u8>) {
+        let record = Record::try_from(&bytes[..]).unwrap();
+
+        assert_eq!(
+            "No more variable data available.",
+            record.parse_string().unwrap_err()
+        );
     }
 
     #[rstest(
