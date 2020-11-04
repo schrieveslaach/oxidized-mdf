@@ -62,30 +62,36 @@ impl<'a> TryFrom<&'a [u8]> for Record<'a> {
         let has_variable_length_columns = (bytes[0] & 0b0010_0000) > 0;
 
         let mut bytes = &bytes[2..];
+        let mut read_bytes = 2usize;
 
         // Parse fixed length size
         let fixed_length_size = {
             let fixed_length_size = bytes.read_u16::<LittleEndian>().unwrap();
             fixed_length_size - 4
         };
+        read_bytes += 2;
 
         if fixed_length_size == 0 {
             todo!("No fixed length data! Record cannot be handled yet");
         }
 
         let (fixed_bytes, mut bytes) = bytes.split_at(fixed_length_size as usize);
+        read_bytes += fixed_length_size as usize;
 
         let number_of_columns = bytes.read_u16::<LittleEndian>().unwrap() as usize;
+        read_bytes += 2;
 
         let (null_bitmap, bytes) = if has_null_bitmap {
-            let (null_bitmap, bytes) = bytes.split_at((number_of_columns + 7) / 8);
+            let null_bitmap_length = (number_of_columns + 7) / 8;
+            let (null_bitmap, bytes) = bytes.split_at(null_bitmap_length);
+            read_bytes += null_bitmap_length;
             (Some(null_bitmap), bytes)
         } else {
             (None, bytes)
         };
 
         let variable_columns = if has_variable_length_columns {
-            Some(VariableColumns::new(bytes, null_bitmap))
+            Some(VariableColumns::new(read_bytes, bytes, null_bitmap))
         } else {
             None
         };
@@ -230,11 +236,13 @@ struct VariableColumns<'a> {
     variable_length_column_lengths: &'a [u8],
     null_bitmap: Option<&'a BitSlice<Lsb0, u8>>,
     index: usize,
+    read_bytes: usize,
 }
 
 impl<'a> VariableColumns<'a> {
-    fn new(mut bytes: &'a [u8], null_bitmap: Option<&'a [u8]>) -> Self {
+    fn new(mut read_bytes: usize, mut bytes: &'a [u8], null_bitmap: Option<&'a [u8]>) -> Self {
         let number_of_variable_length_columns = bytes.read_u16::<LittleEndian>().unwrap();
+        read_bytes += 2;
 
         /* TODO: from the original coder
         // If there is no fixed length data and no null bitmap, only the number of variable length columns is stored.
@@ -257,6 +265,7 @@ impl<'a> VariableColumns<'a> {
                 .map(|null_bitmap| BitSlice::from_slice(null_bitmap))
                 .flatten(),
             index: 0,
+            read_bytes,
         }
     }
 }
@@ -279,14 +288,14 @@ impl<'a> Iterator for VariableColumns<'a> {
         let (mut length_bytes, variable_length_column_lengths) =
             self.variable_length_column_lengths.split_at(2);
         self.variable_length_column_lengths = variable_length_column_lengths;
+        self.read_bytes += 2;
 
-        let length = std::cmp::min(
-            length_bytes.read_u16::<LittleEndian>().unwrap() as usize,
-            self.variable_columns.len(),
-        );
+        let length = length_bytes.read_i16::<LittleEndian>().unwrap() as usize;
+        let length = length - std::cmp::min(length, self.read_bytes);
         let (bytes, remaining_bytes) = self.variable_columns.split_at(length);
 
         self.variable_columns = remaining_bytes;
+        self.read_bytes += length;
         self.index += 1;
 
         Some(Some(bytes))
@@ -396,9 +405,10 @@ impl Page {
     fn slots(&self) -> Vec<usize> {
         let mut slots = Vec::with_capacity(self.header.slot_count as usize);
 
-        for i in 1usize..=self.header.slot_count as usize {
-            let index = self.bytes.len() - i * 2;
-            let mut slot_bytes = &self.bytes[index..(index + 2)];
+        let slot_range = (self.bytes.len() - self.header.slot_count as usize * 2)..self.bytes.len();
+        let mut slot_bytes = &self.bytes[slot_range];
+
+        while !slot_bytes.is_empty() {
             let slot_value = slot_bytes.read_u16::<LittleEndian>().unwrap();
             slots.push(slot_value as usize);
         }
@@ -413,13 +423,13 @@ impl Page {
 
         let slots = self.slots();
         for (index, slot) in slots.iter().enumerate() {
-            if let Some(next_slot) = slots.get(index + 1) {
-                let range = *slot..*next_slot;
-                let record = Record::try_from(&self.bytes[range]).unwrap();
-                records.push(record);
-            } else {
-                // TODO: what about this case???
-            }
+            let range = match slots.get(index + 1) {
+                Some(next_slot) => *slot..*next_slot,
+                None => *slot..self.bytes.len(),
+            };
+
+            let record = Record::try_from(&self.bytes[range]).unwrap();
+            records.push(record);
         }
         records
     }
@@ -442,8 +452,8 @@ impl TryFrom<[u8; 8192]> for Page {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rstest::rstest;
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     #[rstest(
         bytes,
@@ -505,7 +515,9 @@ mod tests {
         bytes,
         expected_value,
         // Bytes copied from data/AWLT2005.mdf
-        case(vec![0x30, 0x0, 0x2c, 0x0, 0x4, 0x0, 0x0, 0x0, 0x4, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0e, 0x0, 0x53, 0x20, 0x0, 0x0, 0x0, 0x0, 0x1, 0x6, 0x0, 0x0, 0x0, 0x15, 0xf6, 0xc2, 0x0, 0x4a, 0x98, 0x0, 0x0, 0x15, 0xf6, 0xc2, 0x0, 0x4a, 0x98, 0x0, 0x0, 0xb, 0x0, 0x0, 0xf8, 0x1, 0x0, 0x54, 0x0, 0x73, 0x0, 0x79, 0x0, 0x73, 0x0, 0x72, 0x0, 0x6f, 0x0, 0x77, 0x0, 0x73, 0x0, 0x65, 0x0, 0x74, 0x0, 0x63, 0x0, 0x6f, 0x0, 0x6c, 0x0, 0x75, 0x0, 0x6d, 0x0, 0x6e, 0x0, 0x73, 0x0], String::from("sysrowsetcolumns"))
+        case(vec![0x30, 0x0, 0x2c, 0x0, 0x4, 0x0, 0x0, 0x0, 0x4, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0e, 0x0, 0x53, 0x20, 0x0, 0x0, 0x0, 0x0, 0x1, 0x6, 0x0, 0x0, 0x0, 0x15, 0xf6, 0xc2, 0x0, 0x4a, 0x98, 0x0, 0x0, 0x15, 0xf6, 0xc2, 0x0, 0x4a, 0x98, 0x0, 0x0, 0xb, 0x0, 0x0, 0xf8, 0x1, 0x0, 0x54, 0x0, 0x73, 0x0, 0x79, 0x0, 0x73, 0x0, 0x72, 0x0, 0x6f, 0x0, 0x77, 0x0, 0x73, 0x0, 0x65, 0x0, 0x74, 0x0, 0x63, 0x0, 0x6f, 0x0, 0x6c, 0x0, 0x75, 0x0, 0x6d, 0x0, 0x6e, 0x0, 0x73, 0x0], String::from("sysrowsetcolumns")),
+        // Bytes copied from data/spg_verein_TST.mdf
+        case(vec![48, 0, 48, 0, 233, 135, 194, 92, 1, 0, 0, 0, 0, 0, 0, 14, 0, 85, 32, 0, 0, 0, 0, 1, 108, 0, 0, 0, 112, 200, 220, 0, 230, 167, 0, 0, 177, 76, 220, 0, 160, 171, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 1, 0, 80, 0, 116, 0, 98, 0, 108, 0, 95, 0, 77, 0, 105, 0, 116, 0, 103, 0, 108, 0, 105, 0, 101, 0, 100, 0, 108, 0, 105, 0, 101, 0, 100, 0], String::from("tbl_Mitglied")),
     )]
     fn parse_string(bytes: Vec<u8>, expected_value: String) {
         let record = Record::try_from(&bytes[..]).unwrap();

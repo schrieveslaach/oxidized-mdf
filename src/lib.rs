@@ -117,7 +117,7 @@ impl MdfDatabase {
     ///
     /// assert_eq!(
     ///     first_row.value("AddressLine1").cloned(),
-    ///     Some(Value::String(String::from("8713 Yosemite Ct.BothellWashingtonUnited S")))
+    ///     Some(Value::String(String::from("8713 Yosemite Ct.Bothe")))
     /// );
     /// # }
     /// ```
