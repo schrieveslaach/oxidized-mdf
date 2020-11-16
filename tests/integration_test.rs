@@ -40,8 +40,8 @@ async fn tables(file: &str, table_names: Vec<&str>) -> Result<()> {
     table_name,
     column_names,
     // TODO: strange column name for address table. Check encoding
-    case("AWLT2005.mdf", "Address", vec!["AddressIDⱶ", "AddressLine1", "AddressLine2", "City", "CountryRegion", "ModifiedDate", "PostalCode", "StateProvince", "rowguid"]),
-    case("spg_verein_TST.mdf", "tbl_PLZ", vec!["Ort", "PLZ", "PLZID\n"]),
+    case("AWLT2005.mdf", "Address", vec!["AddressID", "AddressLine1", "AddressLine2", "City", "CountryRegion", "ModifiedDate", "PostalCode", "StateProvince", "rowguid"]),
+    case("spg_verein_TST.mdf", "tbl_PLZ", vec!["Ort", "PLZ", "PLZID"]),
 )]
 #[async_std::test]
 async fn columns(file: &str, table_name: &str, column_names: Vec<&str>) -> Result<()> {
@@ -60,7 +60,8 @@ async fn columns(file: &str, table_name: &str, column_names: Vec<&str>) -> Resul
     table_name,
     column,
     value,
-    case("AWLT2005.mdf", "Address", "AddressLine1", "8713 Yosemite Ct.Bothe")
+    case("AWLT2005.mdf", "Address", "AddressLine1", "8713 Yosemite Ct."),
+    case("spg_verein_TST.mdf", "tbl_Mitglied", "Strasse", "Rebenring 56")
 )]
 #[async_std::test]
 async fn rows(file: &str, table_name: &str, column: &str, value: &str) -> Result<()> {

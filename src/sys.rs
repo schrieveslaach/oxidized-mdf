@@ -171,6 +171,7 @@ impl BaseTableData {
                             Column {
                                 name: &c.name.as_ref().unwrap(),
                                 r#type,
+                                max_length: c.length,
                             }
                         })
                         .collect(),
@@ -218,6 +219,7 @@ impl<'a> Table<'a> {
 pub(crate) struct Column<'a> {
     pub(crate) name: &'a str,
     pub(crate) r#type: &'a str,
+    pub(crate) max_length: i16,
 }
 
 #[derive(Debug)]

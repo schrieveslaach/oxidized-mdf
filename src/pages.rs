@@ -236,7 +236,7 @@ struct VariableColumns<'a> {
     variable_length_column_lengths: &'a [u8],
     null_bitmap: Option<&'a BitSlice<Lsb0, u8>>,
     index: usize,
-    read_bytes: usize,
+    read_bytes_index: Option<usize>,
 }
 
 impl<'a> VariableColumns<'a> {
@@ -265,7 +265,7 @@ impl<'a> VariableColumns<'a> {
                 .map(|null_bitmap| BitSlice::from_slice(null_bitmap))
                 .flatten(),
             index: 0,
-            read_bytes,
+            read_bytes_index: Some(read_bytes + variable_length_column_lengths.len()),
         }
     }
 }
@@ -274,12 +274,7 @@ impl<'a> Iterator for VariableColumns<'a> {
     type Item = Option<&'a [u8]>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(null_bitmap) = self.null_bitmap {
-            if null_bitmap[self.index] {
-                self.index += 1;
-                return Some(None);
-            }
-        }
+        let read_bytes_index = self.read_bytes_index.take()?;
 
         if self.variable_length_column_lengths.len() < 2 {
             return None;
@@ -288,14 +283,24 @@ impl<'a> Iterator for VariableColumns<'a> {
         let (mut length_bytes, variable_length_column_lengths) =
             self.variable_length_column_lengths.split_at(2);
         self.variable_length_column_lengths = variable_length_column_lengths;
-        self.read_bytes += 2;
 
-        let length = length_bytes.read_i16::<LittleEndian>().unwrap() as usize;
-        let length = length - std::cmp::min(length, self.read_bytes);
-        let (bytes, remaining_bytes) = self.variable_columns.split_at(length);
+        let end_index_of_readable_bytes = length_bytes.read_i16::<LittleEndian>().unwrap() as usize;
+        self.read_bytes_index = Some(end_index_of_readable_bytes);
+
+        if let Some(null_bitmap) = self.null_bitmap {
+            if null_bitmap[self.index] {
+                self.index += 1;
+                return Some(None);
+            }
+        }
+
+        let length = end_index_of_readable_bytes - read_bytes_index;
+
+        let (bytes, remaining_bytes) = self
+            .variable_columns
+            .split_at(std::cmp::min(length, self.variable_columns.len()));
 
         self.variable_columns = remaining_bytes;
-        self.read_bytes += length;
         self.index += 1;
 
         Some(Some(bytes))
@@ -525,6 +530,62 @@ mod tests {
         let (parsed_value, _record) = record.parse_string().unwrap();
 
         assert_eq!(expected_value, parsed_value.unwrap());
+    }
+
+    #[test]
+    fn parse_string_with_length() {
+        // Bytes copied from data/spg_verein_TST.mdf
+        let bytes = vec![
+            48, 0, 211, 0, 32, 0, 32, 0, 32, 0, 0, 0, 0, 0, 0, 74, 8, 11, 0, 0, 0, 0, 0, 114, 39,
+            11, 8, 0, 0, 0, 0, 0, 136, 97, 240, 116, 2, 0, 0, 0, 208, 97, 240, 0, 0, 0, 0, 0, 229,
+            28, 11, 116, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 208, 7, 0, 0, 231,
+            116, 2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 220, 3, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0,
+            0, 132, 28, 0, 0, 1, 80, 45, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 57, 11, 0, 0, 209,
+            177, 172, 13, 0, 0, 0, 116, 215, 136, 178, 53, 58, 11, 1, 0, 0, 0, 0, 116, 215, 136,
+            178, 115, 61, 11, 32, 0, 32, 0, 32, 0, 192, 198, 132, 117, 2, 0, 0, 0, 32, 0, 32, 0,
+            32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 116, 215, 136, 178, 53, 58, 11, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 232, 3, 0, 0, 0, 0, 0, 0, 102, 0, 0, 0, 0, 10, 16, 12, 8, 0, 0, 0, 0,
+            8, 26, 57, 0, 106, 1, 116, 1, 116, 1, 126, 1, 142, 1, 142, 1, 166, 1, 176, 1, 200, 1,
+            200, 1, 200, 1, 212, 1, 212, 1, 212, 1, 214, 1, 220, 1, 242, 1, 16, 2, 16, 2, 16, 2,
+            50, 2, 52, 2, 54, 2, 54, 2, 54, 2, 54, 2, 54, 2, 54, 2, 86, 2, 110, 2, 132, 2, 154, 2,
+            198, 2, 230, 2, 230, 2, 254, 2, 254, 2, 254, 2, 254, 2, 254, 2, 38, 3, 38, 3, 38, 3,
+            48, 3, 54, 3, 66, 3, 82, 3, 82, 3, 106, 3, 116, 3, 126, 3, 168, 3, 168, 3, 186, 3, 206,
+            3, 210, 3, 220, 3, 48, 0, 48, 0, 48, 0, 48, 0, 48, 0, 48, 0, 49, 0, 48, 0, 48, 0, 48,
+            0, 72, 0, 101, 0, 114, 0, 114, 0, 110, 0, 70, 0, 114, 0, 97, 0, 110, 0, 107, 0, 66, 0,
+            101, 0, 114, 0, 103, 0, 109, 0, 97, 0, 110, 0, 110, 0, 82, 0, 101, 0, 98, 0, 101, 0,
+            110, 0, 114, 0, 105, 0, 110, 0, 103, 0, 32, 0, 53, 0, 54, 0, 51, 0, 56, 0, 49, 0, 48,
+            0, 56, 0, 66, 0, 114, 0, 97, 0, 117, 0, 110, 0, 115, 0, 99, 0, 104, 0, 119, 0, 101, 0,
+            105, 0, 103, 0, 49, 0, 49, 0, 50, 0, 50, 0, 51, 0, 51, 0, 109, 0, 49, 0, 53, 0, 48, 0,
+            48, 0, 53, 0, 51, 0, 49, 0, 47, 0, 52, 0, 50, 0, 51, 0, 51, 0, 52, 0, 52, 0, 48, 0, 53,
+            0, 51, 0, 49, 0, 47, 0, 50, 0, 50, 0, 55, 0, 55, 0, 56, 0, 56, 0, 57, 0, 57, 0, 49, 0,
+            49, 0, 101, 0, 114, 0, 32, 0, 72, 0, 101, 0, 114, 0, 114, 0, 32, 0, 66, 0, 101, 0, 114,
+            0, 103, 0, 109, 0, 97, 0, 110, 0, 110, 0, 44, 0, 48, 0, 114, 0, 48, 0, 48, 0, 49, 0,
+            32, 0, 220, 0, 98, 0, 117, 0, 110, 0, 103, 0, 115, 0, 108, 0, 101, 0, 105, 0, 116, 0,
+            101, 0, 114, 0, 48, 0, 48, 0, 50, 0, 32, 0, 76, 0, 105, 0, 122, 0, 101, 0, 110, 0, 122,
+            0, 32, 0, 65, 0, 48, 0, 49, 0, 55, 0, 50, 0, 47, 0, 49, 0, 49, 0, 50, 0, 50, 0, 51, 0,
+            51, 0, 48, 0, 49, 0, 55, 0, 50, 0, 47, 0, 52, 0, 52, 0, 53, 0, 53, 0, 54, 0, 54, 0,
+            102, 0, 114, 0, 97, 0, 110, 0, 107, 0, 46, 0, 98, 0, 101, 0, 114, 0, 103, 0, 109, 0,
+            97, 0, 110, 0, 110, 0, 64, 0, 116, 0, 101, 0, 115, 0, 116, 0, 46, 0, 100, 0, 101, 0,
+            119, 0, 119, 0, 119, 0, 46, 0, 115, 0, 112, 0, 103, 0, 45, 0, 112, 0, 101, 0, 105, 0,
+            110, 0, 101, 0, 46, 0, 100, 0, 101, 0, 102, 0, 117, 0, 115, 0, 115, 0, 98, 0, 97, 0,
+            108, 0, 108, 0, 46, 0, 106, 0, 112, 0, 103, 0, 66, 0, 69, 0, 82, 0, 71, 0, 77, 0, 65,
+            0, 78, 0, 78, 0, 32, 0, 32, 0, 32, 0, 32, 0, 32, 0, 32, 0, 32, 0, 70, 0, 82, 0, 65, 0,
+            78, 0, 75, 0, 72, 0, 101, 0, 114, 0, 114, 0, 110, 0, 68, 0, 114, 0, 46, 0, 72, 0, 117,
+            0, 98, 0, 101, 0, 114, 0, 116, 0, 66, 0, 101, 0, 114, 0, 103, 0, 109, 0, 97, 0, 110, 0,
+            110, 0, 77, 0, 101, 0, 105, 0, 115, 0, 101, 0, 110, 0, 119, 0, 101, 0, 103, 0, 32, 0,
+            49, 0, 53, 0, 51, 0, 49, 0, 50, 0, 50, 0, 56, 0, 80, 0, 101, 0, 105, 0, 110, 0, 101, 0,
+            101, 0, 114, 0, 32, 0, 72, 0, 101, 0, 114, 0, 114, 0, 32, 0, 68, 0, 114, 0, 46, 0, 32,
+            0, 66, 0, 101, 0, 114, 0, 103, 0, 109, 0, 97, 0, 110, 0, 110, 0, 44, 0, 83, 0, 101, 0,
+            103, 0, 101, 0, 108, 0, 98, 0, 111, 0, 111, 0, 116, 0, 49, 0, 53, 0, 46, 0, 48, 0, 51,
+            0, 46, 0, 50, 0, 48, 0, 48, 0, 53, 0, 49, 0, 48, 0, 50, 0, 56, 0, 53, 0, 48, 0, 48, 0,
+        ];
+        let record = Record::try_from(&bytes[..]).unwrap();
+
+        let (id, record) = record.parse_string().unwrap();
+        assert_eq!(Some(String::from("0000001000")), id);
+
+        let (id, _record) = record.parse_string().unwrap();
+        assert_eq!(Some(String::from("Herrn")), id);
     }
 
     #[rstest(

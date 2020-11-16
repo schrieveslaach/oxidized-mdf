@@ -117,7 +117,7 @@ impl MdfDatabase {
     ///
     /// assert_eq!(
     ///     first_row.value("AddressLine1").cloned(),
-    ///     Some(Value::String(String::from("8713 Yosemite Ct.Bothe")))
+    ///     Some(Value::String(String::from("8713 Yosemite Ct.")))
     /// );
     /// # }
     /// ```
@@ -201,6 +201,11 @@ impl Value {
                 let (datetime, r) = record.parse_datetime()?;
                 Ok((Value::DateTime(datetime), r))
             }
+            "datetime2" => {
+                // TODO: datetime2 is ignored for now
+                let (_, r) = record.parse_bytes(8)?;
+                Ok((Value::Null, r))
+            }
             "tinyint" => {
                 let (int, r) = record.parse_i8()?;
                 Ok((Value::TinyInt(int), r))
@@ -213,7 +218,12 @@ impl Value {
                 let (int, r) = record.parse_i32()?;
                 Ok((Value::Int(int), r))
             }
-            "nvarchar" => {
+            "nchar" => {
+                let (string, r) =
+                    record.parse_string_from_fixed_bytes(column.max_length as usize)?;
+                Ok((Value::String(string), r))
+            }
+            "nvarchar" | "varchar" => {
                 let (string, r) = record.parse_string()?;
                 Ok((string.map_or(Value::Null, Value::String), r))
             }
