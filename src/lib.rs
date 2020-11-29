@@ -13,9 +13,10 @@ use async_std::fs::File;
 use async_std::io::{Read, Result};
 use async_std::path::{Path, PathBuf};
 use async_std::prelude::*;
+use async_std::stream::Stream;
+use async_std::task::{Context, Poll};
 use chrono::{DateTime, Utc};
 use core::fmt::{Display, Formatter};
-use core::task::{Context, Poll};
 use futures_lite::stream::StreamExt;
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
@@ -153,8 +154,7 @@ impl MdfDatabase {
 
                         rows.push(Ok(Row { columns }));
                     }
-
-                    futures_lite::stream::iter(rows.into_iter())
+                    async_std::stream::from_iter(rows.into_iter())
                 }),
         )
     }
@@ -303,6 +303,7 @@ impl PageReader {
         PageStream {
             page_pointers: page_pointers.into_iter(),
             page_reader: self,
+            current_page: None,
         }
     }
 }
@@ -310,22 +311,37 @@ impl PageReader {
 struct PageStream<'a> {
     page_pointers: std::vec::IntoIter<PagePointer>,
     page_reader: &'a mut PageReader,
+    current_page: Option<Rc<Page>>,
+}
+
+impl<'a> PageStream<'a> {
+    async fn next_page(&mut self) -> Option<Result<Rc<Page>>> {
+        let page_pointer = match self.current_page.take() {
+            Some(current_page) => current_page.next_page_pointer().cloned(),
+            None => self.page_pointers.next(),
+        };
+
+        match page_pointer {
+            Some(page_pointer) => {
+                let page = self.page_reader.read_page(&page_pointer).await;
+
+                if let Ok(current_page) = &page {
+                    self.current_page = Some(current_page.clone());
+                }
+
+                Some(page)
+            }
+            None => None,
+        }
+    }
 }
 
 impl<'a> Stream for PageStream<'a> {
     type Item = Result<Rc<Page>>;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        mut _ctx: &mut Context<'_>,
-    ) -> Poll<Option<<Self as Stream>::Item>> {
-        match self.page_pointers.next() {
-            Some(page_pointer) => {
-                let f = self.page_reader.read_page(&page_pointer);
-                futures_lite::pin!(f);
-                Poll::Ready(Some(futures_lite::future::block_on(f)))
-            }
-            None => Poll::Ready(None),
-        }
+    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let f = self.next_page();
+        futures_lite::pin!(f);
+        Poll::Ready(async_std::task::block_on(f))
     }
 }

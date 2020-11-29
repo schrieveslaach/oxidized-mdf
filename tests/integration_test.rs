@@ -76,3 +76,22 @@ async fn rows(file: &str, table_name: &str, column: &str, value: &str) -> Result
 
     Ok(())
 }
+
+#[rstest(
+    file,
+    table_name,
+    count,
+    case("AWLT2005.mdf", "Address", 450),
+    case("spg_verein_TST.mdf", "tbl_Mitglied", 13),
+    // TODO: 3643 should be the correct number
+    case("spg_verein_TST.mdf", "tbl_Bankleitzahlen", 3549)
+)]
+#[async_std::test]
+async fn number_of_rows(file: &str, table_name: &str, count: usize) -> Result<()> {
+    let mut db = MdfDatabase::open(format!("data/{}", file)).await?;
+    let rows = db.rows(table_name).unwrap();
+
+    assert_eq!(rows.count().await, count);
+
+    Ok(())
+}
