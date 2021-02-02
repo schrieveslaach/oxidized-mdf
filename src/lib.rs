@@ -18,6 +18,7 @@ use async_std::task::{Context, Poll};
 use chrono::{DateTime, Utc};
 use core::fmt::{Display, Formatter};
 use futures_lite::stream::StreamExt;
+use rust_decimal::Decimal;
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::pin::Pin;
@@ -166,6 +167,7 @@ pub enum Value {
     TinyInt(i8),
     SmallInt(i16),
     Int(i32),
+    Decimal(Decimal),
     String(String),
     DateTime(DateTime<Utc>),
     Uuid(Uuid),
@@ -179,6 +181,7 @@ impl Display for Value {
             Value::TinyInt(i) => write!(fmt, "{}", i),
             Value::SmallInt(i) => write!(fmt, "{}", i),
             Value::Int(i) => write!(fmt, "{}", i),
+            Value::Decimal(decimal) => write!(fmt, "{}", decimal),
             Value::String(s) => write!(fmt, "{}", s),
             Value::DateTime(d) => write!(fmt, "{}", d),
             Value::Uuid(uuid) => write!(fmt, "{}", uuid),
@@ -230,6 +233,10 @@ impl Value {
             "uniqueidentifier" => {
                 let (uuid, r) = record.parse_uuid()?;
                 Ok((Value::Uuid(uuid), r))
+            }
+            "decimal" => {
+                let (decimal, r) = record.parse_decimal(column.precision, column.scale)?;
+                Ok((Value::Decimal(decimal), r))
             }
             _ => {
                 eprintln!(

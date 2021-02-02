@@ -2,6 +2,7 @@ use bitvec::{order::Lsb0, slice::BitSlice};
 use byteorder::{LittleEndian, ReadBytesExt};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use core::iter::Iterator;
+use rust_decimal::Decimal;
 use std::convert::TryFrom;
 use std::iter::FromIterator;
 use uuid::Uuid;
@@ -147,6 +148,39 @@ impl<'a> Record<'a> {
         let n = bytes.read_u128::<LittleEndian>().unwrap();
 
         Ok((n, record))
+    }
+
+    pub(crate) fn parse_decimal(
+        self,
+        precision: u8,
+        scale: u8,
+    ) -> Result<(Decimal, Record<'a>), &'static str> {
+        let required_storage_bytes = 1 + if precision <= 9 {
+            4
+        } else if precision <= 19 {
+            2 * 4
+        } else if precision <= 28 {
+            3 * 4
+        } else {
+            4 * 4
+        };
+
+        let (bytes, record) = self.parse_bytes(required_storage_bytes)?;
+        let (sign_byte, mut bytes) = bytes.split_at(1usize);
+
+        let x = if precision <= 9 {
+            bytes.read_i32::<LittleEndian>().unwrap() as i128
+        } else if precision <= 19 {
+            bytes.read_i64::<LittleEndian>().unwrap() as i128
+        } else if precision <= 28 {
+            todo!();
+        } else {
+            bytes.read_i128::<LittleEndian>().unwrap() as i128
+        };
+
+        let mut decimal = Decimal::from_i128_with_scale(x, scale as u32);
+        decimal.set_sign_positive(sign_byte[0] != 0);
+        Ok((decimal, record))
     }
 
     pub(crate) fn parse_bit(self) -> Result<(bool, Record<'a>), &'static str> {
@@ -512,6 +546,25 @@ mod tests {
         let record = Record::try_from(&bytes[..]).unwrap();
 
         let (parsed_value, _record) = record.parse_i64().unwrap();
+
+        assert_eq!(expected_value, parsed_value);
+    }
+
+    #[rstest(
+        bytes,
+        precision,
+        scale,
+        expected_value,
+        case(vec![0u8, 0u8, 9u8, 0u8, 0x01, 0x39, 0x30, 0u8, 0u8, 0u8, 0u8], 5u8, 0u8, Decimal::new(12345, 0)),
+        case(vec![0u8, 0u8, 9u8, 0u8, 0x01, 0x39, 0x30, 0u8, 0u8, 0u8, 0u8], 5u8, 3u8, Decimal::new(12345, 3)),
+        case(vec![0u8, 0u8, 9u8, 0u8, 0x00, 0x39, 0x30, 0u8, 0u8, 0u8, 0u8], 5u8, 3u8, Decimal::new(-12345, 3)),
+        case(vec![0u8, 0u8, 9u8, 0u8, 0x01, 0x4e, 0xe4, 0x01, 0x00, 0u8, 0u8], 9u8, 1u8, Decimal::new(123982, 1)),
+        case(vec![0u8, 0u8, 13u8, 0u8, 0x01, 0xb9, 0xe3, 0x5d, 0xb6, 0x40, 0x70, 0x00, 0x00, 0u8, 0u8], 17u8, 5u8, Decimal::new(123423239824313, 5))
+    )]
+    fn parse_decimal(bytes: Vec<u8>, precision: u8, scale: u8, expected_value: Decimal) {
+        let record = Record::try_from(&bytes[..]).unwrap();
+
+        let (parsed_value, _record) = record.parse_decimal(precision, scale).unwrap();
 
         assert_eq!(expected_value, parsed_value);
     }
