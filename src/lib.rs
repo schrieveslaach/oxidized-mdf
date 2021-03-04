@@ -167,6 +167,7 @@ pub enum Value {
     TinyInt(i8),
     SmallInt(i16),
     Int(i32),
+    BigInt(i64),
     Decimal(Decimal),
     String(String),
     DateTime(DateTime<Utc>),
@@ -181,6 +182,7 @@ impl Display for Value {
             Value::TinyInt(i) => write!(fmt, "{}", i),
             Value::SmallInt(i) => write!(fmt, "{}", i),
             Value::Int(i) => write!(fmt, "{}", i),
+            Value::BigInt(i) => write!(fmt, "{}", i),
             Value::Decimal(decimal) => write!(fmt, "{}", decimal),
             Value::String(s) => write!(fmt, "{}", s),
             Value::DateTime(d) => write!(fmt, "{}", d),
@@ -218,9 +220,13 @@ impl Value {
                 Ok((Value::SmallInt(int), r))
             }
             "int" | "money" => {
-                let (int, r) = record.parse_i32()?;
-                Ok((Value::Int(int), r))
-            }
+                let (int, r) = record.parse_i32_opt()?;
+                Ok((int.map_or(Value::Null, Value::Int), r))
+            },
+            "bigint" => {
+                let (int, r) = record.parse_i64_opt()?;
+                Ok((int.map_or(Value::Null, Value::BigInt), r))
+            },
             "nchar" => {
                 let (string, r) =
                     record.parse_string_from_fixed_bytes(column.max_length as usize)?;

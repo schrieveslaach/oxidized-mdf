@@ -23,6 +23,7 @@ pub struct BootPage {
 pub(crate) struct Record<'a> {
     fixed_bytes: &'a [u8],
     r#type: RecordType,
+    null_bitmap: Option<NullBitmap<'a>>,
     variable_columns: Option<VariableColumns<'a>>,
 }
 
@@ -92,7 +93,7 @@ impl<'a> TryFrom<&'a [u8]> for Record<'a> {
         };
 
         let variable_columns = if has_variable_length_columns {
-            Some(VariableColumns::new(read_bytes, bytes, null_bitmap))
+            Some(VariableColumns::new(read_bytes, bytes))
         } else {
             None
         };
@@ -100,6 +101,7 @@ impl<'a> TryFrom<&'a [u8]> for Record<'a> {
         Ok(Self {
             fixed_bytes,
             r#type,
+            null_bitmap: null_bitmap.map(NullBitmap::new),
             variable_columns,
         })
     }
@@ -134,12 +136,30 @@ impl<'a> Record<'a> {
         Ok((n, record))
     }
 
+    pub(crate) fn parse_i32_opt(self) -> Result<(Option<i32>, Record<'a>), &'static str> {
+        self.parse_bytes_opt(4).map(|(bytes, record)| {
+            (
+                bytes.map(|mut bytes| bytes.read_i32::<LittleEndian>().unwrap()),
+                record,
+            )
+        })
+    }
+
     pub(crate) fn parse_i64(self) -> Result<(i64, Record<'a>), &'static str> {
         let (mut bytes, record) = self.parse_bytes(8)?;
 
         let n = bytes.read_i64::<LittleEndian>().unwrap();
 
         Ok((n, record))
+    }
+
+    pub(crate) fn parse_i64_opt(self) -> Result<(Option<i64>, Record<'a>), &'static str> {
+        self.parse_bytes_opt(8).map(|(bytes, record)| {
+            (
+                bytes.map(|mut bytes| bytes.read_i64::<LittleEndian>().unwrap()),
+                record,
+            )
+        })
     }
 
     fn parse_u128(self) -> Result<(u128, Record<'a>), &'static str> {
@@ -203,15 +223,40 @@ impl<'a> Record<'a> {
     }
 
     pub(crate) fn parse_bytes(self, len: usize) -> Result<(&'a [u8], Record<'a>), &'static str> {
+        let (bytes, record) = self.parse_bytes_opt(len)?;
+
+        match bytes {
+            Some(bytes) => Ok((bytes, record)),
+            None => Err("Requested none null bytes but value is null"),
+        }
+    }
+
+    pub(crate) fn parse_bytes_opt(
+        mut self,
+        len: usize,
+    ) -> Result<(Option<&'a [u8]>, Record<'a>), &'static str> {
+        if let Some(null_bitmap) = self.null_bitmap.as_mut() {
+            match null_bitmap.next() {
+                Some(null_bit) if null_bit => {
+                    return Ok((None, self));
+                }
+                None => {
+                    return Err("No more data!");
+                }
+                _ => {}
+            }
+        }
+
         let (bytes, remaining_bytes) = &self.fixed_bytes.split_at(len);
 
         let record = Self {
             fixed_bytes: remaining_bytes,
             r#type: self.r#type,
+            null_bitmap: self.null_bitmap,
             variable_columns: self.variable_columns,
         };
 
-        Ok((bytes, record))
+        Ok((Some(bytes), record))
     }
 
     pub(crate) fn parse_string_from_fixed_bytes(
@@ -249,6 +294,7 @@ impl<'a> Record<'a> {
         let record = Self {
             fixed_bytes: self.fixed_bytes,
             r#type: self.r#type,
+            null_bitmap: self.null_bitmap,
             variable_columns: Some(variable_columns),
         };
 
@@ -265,16 +311,47 @@ impl<'a> Record<'a> {
 }
 
 #[derive(Debug)]
+struct NullBitmap<'a> {
+    index: usize,
+    null_bitmap: &'a BitSlice<Lsb0, u8>,
+}
+
+impl<'a> NullBitmap<'a> {
+    fn new(null_bitmap: &'a [u8]) -> Self {
+        Self {
+            index: 0,
+            null_bitmap: BitSlice::from_slice(null_bitmap).unwrap(),
+        }
+    }
+}
+
+impl<'a> Iterator for NullBitmap<'a> {
+    type Item = bool;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.null_bitmap.len() {
+            return None;
+        }
+
+        let index = self.index;
+        self.index += 1;
+        if self.null_bitmap[index] {
+            Some(true)
+        } else {
+            Some(false)
+        }
+    }
+}
+
+#[derive(Debug)]
 struct VariableColumns<'a> {
     variable_columns: &'a [u8],
     variable_length_column_lengths: &'a [u8],
-    null_bitmap: Option<&'a BitSlice<Lsb0, u8>>,
-    index: usize,
     read_bytes_index: Option<usize>,
 }
 
 impl<'a> VariableColumns<'a> {
-    fn new(mut read_bytes: usize, mut bytes: &'a [u8], null_bitmap: Option<&'a [u8]>) -> Self {
+    fn new(mut read_bytes: usize, mut bytes: &'a [u8]) -> Self {
         let number_of_variable_length_columns = bytes.read_u16::<LittleEndian>().unwrap();
         read_bytes += 2;
 
@@ -295,10 +372,6 @@ impl<'a> VariableColumns<'a> {
         Self {
             variable_columns,
             variable_length_column_lengths,
-            null_bitmap: null_bitmap
-                .map(|null_bitmap| BitSlice::from_slice(null_bitmap))
-                .flatten(),
-            index: 0,
             read_bytes_index: Some(read_bytes + variable_length_column_lengths.len()),
         }
     }
@@ -321,13 +394,6 @@ impl<'a> Iterator for VariableColumns<'a> {
         let end_index_of_readable_bytes = length_bytes.read_i16::<LittleEndian>().unwrap() as usize;
         self.read_bytes_index = Some(end_index_of_readable_bytes);
 
-        if let Some(null_bitmap) = self.null_bitmap {
-            if null_bitmap[self.index] {
-                self.index += 1;
-                return Some(None);
-            }
-        }
-
         let length = end_index_of_readable_bytes - read_bytes_index;
 
         let (bytes, remaining_bytes) = self
@@ -335,7 +401,6 @@ impl<'a> Iterator for VariableColumns<'a> {
             .split_at(std::cmp::min(length, self.variable_columns.len()));
 
         self.variable_columns = remaining_bytes;
-        self.index += 1;
 
         Some(Some(bytes))
     }

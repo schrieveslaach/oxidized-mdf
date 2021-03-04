@@ -64,7 +64,7 @@ async fn columns(file: &str, table_name: &str, column_names: Vec<&str>) -> Resul
     case("spg_verein_TST.mdf", "tbl_Mitglied", "Strasse", "Rebenring 56")
 )]
 #[async_std::test]
-async fn rows(file: &str, table_name: &str, column: &str, value: &str) -> Result<()> {
+async fn first_row(file: &str, table_name: &str, column: &str, value: &str) -> Result<()> {
     let mut db = MdfDatabase::open(format!("data/{}", file)).await?;
 
     let mut rows = db.rows(table_name).unwrap();
@@ -92,6 +92,45 @@ async fn number_of_rows(file: &str, table_name: &str, count: usize) -> Result<()
     let rows = db.rows(table_name).unwrap();
 
     assert_eq!(rows.count().await, count);
+
+    Ok(())
+}
+
+#[rstest(
+    file,
+    table_name,
+    skip,
+    column,
+    expected_value,
+    case(
+        "AWLT2005.mdf",
+        "ProductCategory",
+        0,
+        "ParentProductCategoryID",
+        Value::Null
+    ),
+    case(
+        "AWLT2005.mdf",
+        "ProductCategory",
+        4,
+        "ParentProductCategoryID",
+        Value::Int(1)
+    )
+)]
+#[async_std::test]
+async fn rows(
+    file: &str,
+    table_name: &str,
+    skip: usize,
+    column: &str,
+    expected_value: Value,
+) -> Result<()> {
+    let mut db = MdfDatabase::open(format!("data/{}", file)).await?;
+    let mut rows = db.rows(table_name).unwrap().skip(skip);
+
+    let row = rows.next().await.unwrap().unwrap();
+
+    assert_eq!(row.value(column), Some(&expected_value));
 
     Ok(())
 }
