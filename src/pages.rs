@@ -231,20 +231,25 @@ impl<'a> Record<'a> {
         }
     }
 
+    fn pop_next_null_bit(&mut self) -> bool {
+        if let Some(null_bitmap) = self.null_bitmap.as_mut() {
+            match null_bitmap.next() {
+                Some(null_bit) => {
+                    return null_bit;
+                }
+                _ => {}
+            }
+        }
+
+        false
+    }
+
     pub(crate) fn parse_bytes_opt(
         mut self,
         len: usize,
     ) -> Result<(Option<&'a [u8]>, Record<'a>), &'static str> {
-        if let Some(null_bitmap) = self.null_bitmap.as_mut() {
-            match null_bitmap.next() {
-                Some(null_bit) if null_bit => {
-                    return Ok((None, self));
-                }
-                None => {
-                    return Err("No more data!");
-                }
-                _ => {}
-            }
+        if self.pop_next_null_bit() {
+            return Ok((None, self));
         }
 
         let (bytes, remaining_bytes) = &self.fixed_bytes.split_at(len);
@@ -271,7 +276,11 @@ impl<'a> Record<'a> {
         Ok((s, record))
     }
 
-    pub(crate) fn parse_string(self) -> Result<(Option<String>, Record<'a>), &'static str> {
+    pub(crate) fn parse_string(mut self) -> Result<(Option<String>, Record<'a>), &'static str> {
+        if self.pop_next_null_bit() {
+            return Ok((None, self));
+        }
+
         let mut variable_columns = match self.variable_columns {
             Some(columns) => columns,
             None => {
@@ -279,17 +288,23 @@ impl<'a> Record<'a> {
             }
         };
 
-        let first = match variable_columns.next() {
-            Some(first) => first,
+        let s = match variable_columns.next() {
+            Some(first) => {
+                if first.len() == 0 {
+                    // TODO: this is an open question: is it correct to assume that an
+                    // empty array is an null string? Some SQL Server do so but is that
+                    // true for MSSQL and therefore, is this true for MDF files?
+                    // One of the integration tests demands this assumption.
+                    None
+                } else {
+                    let (s, _, _) = encoding_rs::UTF_16LE.decode(first);
+                    Some(s.into_owned())
+                }
+            }
             None => {
                 return Err("No more variable data available.");
             }
         };
-
-        let s = first.map(|first| {
-            let (s, _, _) = encoding_rs::UTF_16LE.decode(first);
-            s.into_owned()
-        });
 
         let record = Self {
             fixed_bytes: self.fixed_bytes,
@@ -378,7 +393,7 @@ impl<'a> VariableColumns<'a> {
 }
 
 impl<'a> Iterator for VariableColumns<'a> {
-    type Item = Option<&'a [u8]>;
+    type Item = &'a [u8];
 
     fn next(&mut self) -> Option<Self::Item> {
         let read_bytes_index = self.read_bytes_index.take()?;
@@ -402,7 +417,7 @@ impl<'a> Iterator for VariableColumns<'a> {
 
         self.variable_columns = remaining_bytes;
 
-        Some(Some(bytes))
+        Some(bytes)
     }
 }
 

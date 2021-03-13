@@ -115,7 +115,15 @@ async fn number_of_rows(file: &str, table_name: &str, count: usize) -> Result<()
         4,
         "ParentProductCategoryID",
         Value::Int(1)
-    )
+    ),
+    case(
+        "spg_verein_TST.mdf",
+        "tbl_Mitglied",
+        1,
+        "Titel",
+        Value::String(String::from("Dr.Dr."))
+    ),
+    case("spg_verein_TST.mdf", "tbl_Mitglied", 3, "Titel", Value::Null)
 )]
 #[async_std::test]
 async fn rows(
