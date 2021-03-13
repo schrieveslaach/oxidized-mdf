@@ -9,6 +9,7 @@ mod sys;
 
 use crate::pages::{BootPage, Page, PagePointer, Record};
 use crate::sys::{BaseTableData, Column};
+use async_log::span;
 use async_std::fs::File;
 use async_std::io::{Read, Result};
 use async_std::path::{Path, PathBuf};
@@ -18,6 +19,7 @@ use async_std::task::{Context, Poll};
 use chrono::{DateTime, Utc};
 use core::fmt::{Display, Formatter};
 use futures_lite::stream::StreamExt;
+use log::error;
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
@@ -130,34 +132,52 @@ impl MdfDatabase {
         let table = self.base_table_data.table(table_name)?;
 
         let page_pointers = table.page_pointers();
-        Some(
-            self.page_reader
-                .read_pages(page_pointers)
-                .flat_map(move |page| {
-                    let mut rows = Vec::new();
 
-                    for record in page.unwrap().records().into_iter() {
-                        let mut columns = BTreeMap::new();
+        span!("reading pages of {}", table_name, {
+            Some(
+                self.page_reader
+                    .read_pages(page_pointers)
+                    .flat_map(move |page| {
+                        let mut rows = Vec::new();
 
-                        let mut record = Some(record);
-                        for column in &table.columns {
-                            let (value, r) = match Value::parse(column, record.take().unwrap()) {
-                                Ok((value, r)) => (value, r),
-                                Err(_e) => {
-                                    break;
+                        let page = match page {
+                            Ok(page) => page,
+                            Err(err) => {
+                                error!("Cannot read page: {}", err);
+                                return async_std::stream::from_iter(rows.into_iter());
+                            }
+                        };
+
+                        span!("page header {:?}", page.header(), {
+                            for record in page.records().into_iter() {
+                                let mut columns = BTreeMap::new();
+
+                                let mut record = Some(record);
+                                for column in &table.columns {
+                                    let (value, r) =
+                                        match Value::parse(column, record.take().unwrap()) {
+                                            Ok((value, r)) => (value, r),
+                                            Err(e) => {
+                                                error!(
+                                                    "Error during parsing column {:?}: {}",
+                                                    column, e
+                                                );
+                                                break;
+                                            }
+                                        };
+
+                                    columns.insert(column.name.to_string(), value);
+
+                                    record = Some(r);
                                 }
-                            };
 
-                            columns.insert(column.name.to_string(), value);
-
-                            record = Some(r);
-                        }
-
-                        rows.push(Ok(Row { columns }));
-                    }
-                    async_std::stream::from_iter(rows.into_iter())
-                }),
-        )
+                                rows.push(Ok(Row { columns }));
+                            }
+                        });
+                        async_std::stream::from_iter(rows.into_iter())
+                    }),
+            )
+        })
     }
 }
 
@@ -222,11 +242,11 @@ impl Value {
             "int" | "money" => {
                 let (int, r) = record.parse_i32_opt()?;
                 Ok((int.map_or(Value::Null, Value::Int), r))
-            },
+            }
             "bigint" => {
                 let (int, r) = record.parse_i64_opt()?;
                 Ok((int.map_or(Value::Null, Value::BigInt), r))
-            },
+            }
             "nchar" => {
                 let (string, r) =
                     record.parse_string_from_fixed_bytes(column.max_length as usize)?;
@@ -244,13 +264,7 @@ impl Value {
                 let (decimal, r) = record.parse_decimal(column.precision, column.scale)?;
                 Ok((Value::Decimal(decimal), r))
             }
-            _ => {
-                eprintln!(
-                    "---> {} not yet supported for column {} (record: {:?})",
-                    &column.r#type, &column.name, &record
-                );
-                Err("Unknown column type")
-            }
+            _ => Err("Unknown column type"),
         }
     }
 }

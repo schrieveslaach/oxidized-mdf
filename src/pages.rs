@@ -506,6 +506,10 @@ pub(crate) struct Page {
 }
 
 impl Page {
+    pub(crate) fn header(&self) -> &PageHeader {
+        &self.header
+    }
+
     fn slots(&self) -> Vec<usize> {
         let mut slots = Vec::with_capacity(self.header.slot_count as usize);
 
