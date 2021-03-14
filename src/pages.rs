@@ -170,11 +170,11 @@ impl<'a> Record<'a> {
         Ok((n, record))
     }
 
-    pub(crate) fn parse_decimal(
+    pub(crate) fn parse_decimal_opt(
         self,
         precision: u8,
         scale: u8,
-    ) -> Result<(Decimal, Record<'a>), &'static str> {
+    ) -> Result<(Option<Decimal>, Record<'a>), &'static str> {
         let required_storage_bytes = 1 + if precision <= 9 {
             4
         } else if precision <= 19 {
@@ -185,22 +185,27 @@ impl<'a> Record<'a> {
             4 * 4
         };
 
-        let (bytes, record) = self.parse_bytes(required_storage_bytes)?;
-        let (sign_byte, mut bytes) = bytes.split_at(1usize);
+        let (bytes, record) = self.parse_bytes_opt(required_storage_bytes)?;
+        Ok((
+            bytes.map(|bytes| {
+                let (sign_byte, mut bytes) = bytes.split_at(1usize);
 
-        let x = if precision <= 9 {
-            bytes.read_i32::<LittleEndian>().unwrap() as i128
-        } else if precision <= 19 {
-            bytes.read_i64::<LittleEndian>().unwrap() as i128
-        } else if precision <= 28 {
-            todo!();
-        } else {
-            bytes.read_i128::<LittleEndian>().unwrap() as i128
-        };
+                let x = if precision <= 9 {
+                    bytes.read_i32::<LittleEndian>().unwrap() as i128
+                } else if precision <= 19 {
+                    bytes.read_i64::<LittleEndian>().unwrap() as i128
+                } else if precision <= 28 {
+                    todo!();
+                } else {
+                    bytes.read_i128::<LittleEndian>().unwrap() as i128
+                };
 
-        let mut decimal = Decimal::from_i128_with_scale(x, scale as u32);
-        decimal.set_sign_positive(sign_byte[0] != 0);
-        Ok((decimal, record))
+                let mut decimal = Decimal::from_i128_with_scale(x, scale as u32);
+                decimal.set_sign_positive(sign_byte[0] != 0);
+                decimal
+            }),
+            record,
+        ))
     }
 
     pub(crate) fn parse_bit(self) -> Result<(bool, Record<'a>), &'static str> {
@@ -264,6 +269,38 @@ impl<'a> Record<'a> {
         Ok((Some(bytes), record))
     }
 
+    const EMPTY_SLICE: &'static [u8] = &[];
+
+    pub(crate) fn parse_variables_bytes_opt(
+        mut self,
+    ) -> Result<(Option<&'a [u8]>, Record<'a>), &'static str> {
+        if self.pop_next_null_bit() {
+            return Ok((None, self));
+        }
+
+        let mut variable_columns = match self.variable_columns {
+            Some(columns) => columns,
+            None => {
+                return Err("no variable column data");
+            }
+        };
+
+        let bytes = variable_columns
+            .next()
+            // If the current variable length column index exceeds the number of stored
+            // variable length columns, the value is empty by definition (that is, 0 bytes, but not null).
+            .unwrap_or(Self::EMPTY_SLICE);
+
+        let record = Self {
+            fixed_bytes: self.fixed_bytes,
+            r#type: self.r#type,
+            null_bitmap: self.null_bitmap,
+            variable_columns: Some(variable_columns),
+        };
+
+        Ok((Some(bytes), record))
+    }
+
     pub(crate) fn parse_string_from_fixed_bytes(
         self,
         len: usize,
@@ -276,19 +313,10 @@ impl<'a> Record<'a> {
         Ok((s, record))
     }
 
-    pub(crate) fn parse_string(mut self) -> Result<(Option<String>, Record<'a>), &'static str> {
-        if self.pop_next_null_bit() {
-            return Ok((None, self));
-        }
+    pub(crate) fn parse_string(self) -> Result<(Option<String>, Record<'a>), &'static str> {
+        let (bytes, record) = self.parse_variables_bytes_opt()?;
 
-        let mut variable_columns = match self.variable_columns {
-            Some(columns) => columns,
-            None => {
-                return Err("no variable column data");
-            }
-        };
-
-        let s = match variable_columns.next() {
+        let s = match bytes {
             Some(first) => {
                 if first.len() == 0 {
                     // TODO: this is an open question: is it correct to assume that an
@@ -301,16 +329,7 @@ impl<'a> Record<'a> {
                     Some(s.into_owned())
                 }
             }
-            None => {
-                return Err("No more variable data available.");
-            }
-        };
-
-        let record = Self {
-            fixed_bytes: self.fixed_bytes,
-            r#type: self.r#type,
-            null_bitmap: self.null_bitmap,
-            variable_columns: Some(variable_columns),
+            None => None,
         };
 
         Ok((s, record))
@@ -648,25 +667,26 @@ mod tests {
     fn parse_decimal(bytes: Vec<u8>, precision: u8, scale: u8, expected_value: Decimal) {
         let record = Record::try_from(&bytes[..]).unwrap();
 
-        let (parsed_value, _record) = record.parse_decimal(precision, scale).unwrap();
+        let (parsed_value, _record) = record.parse_decimal_opt(precision, scale).unwrap();
 
-        assert_eq!(expected_value, parsed_value);
+        assert_eq!(Some(expected_value), parsed_value);
     }
 
     #[rstest(
         bytes,
         expected_value,
         // Bytes copied from data/AWLT2005.mdf
-        case(vec![0x30, 0x0, 0x2c, 0x0, 0x4, 0x0, 0x0, 0x0, 0x4, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0e, 0x0, 0x53, 0x20, 0x0, 0x0, 0x0, 0x0, 0x1, 0x6, 0x0, 0x0, 0x0, 0x15, 0xf6, 0xc2, 0x0, 0x4a, 0x98, 0x0, 0x0, 0x15, 0xf6, 0xc2, 0x0, 0x4a, 0x98, 0x0, 0x0, 0xb, 0x0, 0x0, 0xf8, 0x1, 0x0, 0x54, 0x0, 0x73, 0x0, 0x79, 0x0, 0x73, 0x0, 0x72, 0x0, 0x6f, 0x0, 0x77, 0x0, 0x73, 0x0, 0x65, 0x0, 0x74, 0x0, 0x63, 0x0, 0x6f, 0x0, 0x6c, 0x0, 0x75, 0x0, 0x6d, 0x0, 0x6e, 0x0, 0x73, 0x0], String::from("sysrowsetcolumns")),
+        case(vec![0x30, 0x0, 0x2c, 0x0, 0x4, 0x0, 0x0, 0x0, 0x4, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0e, 0x0, 0x53, 0x20, 0x0, 0x0, 0x0, 0x0, 0x1, 0x6, 0x0, 0x0, 0x0, 0x15, 0xf6, 0xc2, 0x0, 0x4a, 0x98, 0x0, 0x0, 0x15, 0xf6, 0xc2, 0x0, 0x4a, 0x98, 0x0, 0x0, 0xb, 0x0, 0x0, 0xf8, 0x1, 0x0, 0x54, 0x0, 0x73, 0x0, 0x79, 0x0, 0x73, 0x0, 0x72, 0x0, 0x6f, 0x0, 0x77, 0x0, 0x73, 0x0, 0x65, 0x0, 0x74, 0x0, 0x63, 0x0, 0x6f, 0x0, 0x6c, 0x0, 0x75, 0x0, 0x6d, 0x0, 0x6e, 0x0, 0x73, 0x0], Some(String::from("sysrowsetcolumns"))),
         // Bytes copied from data/spg_verein_TST.mdf
-        case(vec![48, 0, 48, 0, 233, 135, 194, 92, 1, 0, 0, 0, 0, 0, 0, 14, 0, 85, 32, 0, 0, 0, 0, 1, 108, 0, 0, 0, 112, 200, 220, 0, 230, 167, 0, 0, 177, 76, 220, 0, 160, 171, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 1, 0, 80, 0, 116, 0, 98, 0, 108, 0, 95, 0, 77, 0, 105, 0, 116, 0, 103, 0, 108, 0, 105, 0, 101, 0, 100, 0, 108, 0, 105, 0, 101, 0, 100, 0], String::from("tbl_Mitglied")),
+        case(vec![48, 0, 48, 0, 233, 135, 194, 92, 1, 0, 0, 0, 0, 0, 0, 14, 0, 85, 32, 0, 0, 0, 0, 1, 108, 0, 0, 0, 112, 200, 220, 0, 230, 167, 0, 0, 177, 76, 220, 0, 160, 171, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 1, 0, 80, 0, 116, 0, 98, 0, 108, 0, 95, 0, 77, 0, 105, 0, 116, 0, 103, 0, 108, 0, 105, 0, 101, 0, 100, 0, 108, 0, 105, 0, 101, 0, 100, 0], Some(String::from("tbl_Mitglied"))),
+        case(vec![0b0010_0000, 0u8, 5u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8], None),
     )]
-    fn parse_string(bytes: Vec<u8>, expected_value: String) {
+    fn parse_string(bytes: Vec<u8>, expected_value: Option<String>) {
         let record = Record::try_from(&bytes[..]).unwrap();
 
         let (parsed_value, _record) = record.parse_string().unwrap();
 
-        assert_eq!(expected_value, parsed_value.unwrap());
+        assert_eq!(expected_value, parsed_value);
     }
 
     #[test]
@@ -723,19 +743,6 @@ mod tests {
 
         let (id, _record) = record.parse_string().unwrap();
         assert_eq!(Some(String::from("Herrn")), id);
-    }
-
-    #[rstest(
-        bytes,
-        case(vec![0b0010_0000, 0u8, 5u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]),
-    )]
-    fn parse_not_string_due_to_missing_data(bytes: Vec<u8>) {
-        let record = Record::try_from(&bytes[..]).unwrap();
-
-        assert_eq!(
-            "No more variable data available.",
-            record.parse_string().unwrap_err()
-        );
     }
 
     #[rstest(

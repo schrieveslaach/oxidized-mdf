@@ -228,7 +228,7 @@ impl Value {
             }
             "datetime2" => {
                 // TODO: datetime2 is ignored for now
-                let (_, r) = record.parse_bytes(8)?;
+                let (_, r) = record.parse_bytes_opt(8)?;
                 Ok((Value::Null, r))
             }
             "tinyint" => {
@@ -261,8 +261,8 @@ impl Value {
                 Ok((Value::Uuid(uuid), r))
             }
             "decimal" => {
-                let (decimal, r) = record.parse_decimal(column.precision, column.scale)?;
-                Ok((Value::Decimal(decimal), r))
+                let (decimal, r) = record.parse_decimal_opt(column.precision, column.scale)?;
+                Ok((decimal.map_or(Value::Null, Value::Decimal), r))
             }
             _ => Err("Unknown column type"),
         }

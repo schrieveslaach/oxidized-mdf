@@ -123,7 +123,8 @@ async fn number_of_rows(file: &str, table_name: &str, count: usize) -> Result<()
         "Titel",
         Value::String(String::from("Dr.Dr."))
     ),
-    case("spg_verein_TST.mdf", "tbl_Mitglied", 3, "Titel", Value::Null)
+    case("spg_verein_TST.mdf", "tbl_Mitglied", 3, "Titel", Value::Null),
+    case("spg_verein_TST.mdf", "tbl_Mitglied", 0, "Kontosaldo", Value::Null)
 )]
 #[async_std::test]
 async fn rows(
