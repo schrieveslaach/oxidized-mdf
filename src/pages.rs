@@ -221,17 +221,61 @@ impl<'a> Record<'a> {
     ) -> Result<(Option<DateTime<Utc>>, Record<'a>), &'static str> {
         let (bytes, record) = self.parse_bytes_opt(8)?;
 
-        Ok((
-            bytes.map(|mut bytes| {
+        let datetime = match bytes {
+            Some(mut bytes) => {
                 let time = bytes.read_i32::<LittleEndian>().unwrap();
                 let days = bytes.read_i32::<LittleEndian>().unwrap();
 
-                Utc.ymd(1900, 1, 1).and_hms(0, 0, 0)
-                    + Duration::milliseconds((time as f64 * Self::CLOCK_TICK_MS) as i64)
-                    + Duration::days(days as i64)
-            }),
-            record,
-        ))
+                let datetime = Utc
+                    .ymd(1900, 1, 1)
+                    .and_hms(0, 0, 0)
+                    .checked_add_signed(Duration::milliseconds(
+                        (time as f64 * Self::CLOCK_TICK_MS) as i64,
+                    ))
+                    .ok_or("Cannot parse datetime due to overflow")?
+                    .checked_add_signed(Duration::days(days as i64))
+                    .ok_or("Cannot parse datetime due to overflow")?;
+
+                Some(datetime)
+            }
+            None => None,
+        };
+
+        Ok((datetime, record))
+    }
+
+    pub(crate) fn parse_datetime2_opt(
+        self,
+        scale: u8,
+    ) -> Result<(Option<DateTime<Utc>>, Record<'a>), &'static str> {
+        let (bytes, record) = self.parse_bytes_opt(8)?;
+
+        let datetime = match bytes {
+            Some(mut bytes) => {
+                let bytes_of_time = if scale <= 2 {
+                    3
+                } else if 3 <= scale && scale <= 4 {
+                    4
+                } else {
+                    5
+                };
+
+                let _time = bytes.read_int::<LittleEndian>(bytes_of_time).unwrap();
+                // TODO: include time in the calcution
+                let days = bytes.read_i24::<LittleEndian>().unwrap();
+
+                let datetime = Utc
+                    .ymd(1, 1, 1)
+                    .and_hms(0, 0, 0)
+                    .checked_add_signed(Duration::days(days as i64))
+                    .ok_or("Cannot parse datetime due to overflow")?;
+
+                Some(datetime)
+            }
+            None => None,
+        };
+
+        Ok((datetime, record))
     }
 
     pub(crate) fn parse_bytes(self, len: usize) -> Result<(&'a [u8], Record<'a>), &'static str> {

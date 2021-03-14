@@ -127,7 +127,9 @@ async fn number_of_rows(file: &str, table_name: &str, count: usize) -> Result<()
     case("spg_verein_TST.mdf", "tbl_Mitglied", 3, "Titel", Value::Null),
     case("spg_verein_TST.mdf", "tbl_Mitglied", 0, "Kontosaldo", Value::Null),
     case("AWLT2005.mdf", "SalesOrderHeader", 0, "DueDate", Value::DateTime(Utc.ymd(2004, 6, 13).and_hms(0,0,0))),
-    case("AWLT2005.mdf", "Product", 0, "SellEndDate", Value::Null)
+    case("AWLT2005.mdf", "Product", 0, "SellEndDate", Value::Null),
+    case("spg_verein_TST.mdf", "tbl_Mitglied", 0, "Austritt_Datum", Value::Null),
+    case("spg_verein_TST.mdf", "tbl_Mitglied", 7, "Eintritt_Datum", Value::DateTime(Utc.ymd(2006, 9, 10).and_hms(0,0,0))),
 )]
 #[async_std::test]
 async fn rows(

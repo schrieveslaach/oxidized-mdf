@@ -19,7 +19,7 @@ use async_std::task::{Context, Poll};
 use chrono::{DateTime, Utc};
 use core::fmt::{Display, Formatter};
 use futures_lite::stream::StreamExt;
-use log::{error, trace};
+use log::error;
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
@@ -154,13 +154,6 @@ impl MdfDatabase {
 
                                 let mut record = Some(record);
                                 for column in &table.columns {
-                                    // TODO: due to existing issues in the parsing process we will
-                                    // ignore the date time because it might cause overflow erros.
-                                    if column.name == "ModifiedDate" {
-                                        trace!("Ignoring column {:?}", column);
-                                        continue;
-                                    }
-
                                     let (value, r) =
                                         match Value::parse(column, record.take().unwrap()) {
                                             Ok((value, r)) => (value, r),
@@ -234,9 +227,8 @@ impl Value {
                 Ok((datetime.map_or(Value::Null, Value::DateTime), r))
             }
             "datetime2" => {
-                // TODO: datetime2 is ignored for now
-                let (_, r) = record.parse_bytes_opt(8)?;
-                Ok((Value::Null, r))
+                let (datetime, r) = record.parse_datetime2_opt(column.scale)?;
+                Ok((datetime.map_or(Value::Null, Value::DateTime), r))
             }
             "tinyint" => {
                 let (int, r) = record.parse_i8()?;
