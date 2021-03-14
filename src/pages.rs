@@ -216,15 +216,22 @@ impl<'a> Record<'a> {
 
     const CLOCK_TICK_MS: f64 = 10.0 / 3.0;
 
-    pub(crate) fn parse_datetime(self) -> Result<(DateTime<Utc>, Record<'a>), &'static str> {
-        let (time, record) = self.parse_i32()?;
-        let (days, record) = record.parse_i32()?;
+    pub(crate) fn parse_datetime_opt(
+        self,
+    ) -> Result<(Option<DateTime<Utc>>, Record<'a>), &'static str> {
+        let (bytes, record) = self.parse_bytes_opt(8)?;
 
-        let datetime = Utc.ymd(1900, 1, 1).and_hms(0, 0, 0)
-            + Duration::milliseconds((time as f64 * Self::CLOCK_TICK_MS) as i64)
-            + Duration::days(days as i64);
+        Ok((
+            bytes.map(|mut bytes| {
+                let time = bytes.read_i32::<LittleEndian>().unwrap();
+                let days = bytes.read_i32::<LittleEndian>().unwrap();
 
-        Ok((datetime, record))
+                Utc.ymd(1900, 1, 1).and_hms(0, 0, 0)
+                    + Duration::milliseconds((time as f64 * Self::CLOCK_TICK_MS) as i64)
+                    + Duration::days(days as i64)
+            }),
+            record,
+        ))
     }
 
     pub(crate) fn parse_bytes(self, len: usize) -> Result<(&'a [u8], Record<'a>), &'static str> {
@@ -748,12 +755,12 @@ mod tests {
     #[rstest(
         bytes,
         expected_value,
-        case(vec![0u8, 0u8, 12u8, 0u8, 0, 0, 0, 0, 249, 148, 0, 0, 0u8, 0u8], Utc.ymd(2004, 6, 1).and_hms(0, 0, 0))
+        case(vec![0u8, 0u8, 12u8, 0u8, 0, 0, 0, 0, 249, 148, 0, 0, 0u8, 0u8], Some(Utc.ymd(2004, 6, 1).and_hms(0, 0, 0)))
     )]
-    fn parse_datetime(bytes: Vec<u8>, expected_value: DateTime<Utc>) {
+    fn parse_datetime(bytes: Vec<u8>, expected_value: Option<DateTime<Utc>>) {
         let record = Record::try_from(&bytes[..]).unwrap();
 
-        let (parsed_value, _record) = record.parse_datetime().unwrap();
+        let (parsed_value, _record) = record.parse_datetime_opt().unwrap();
 
         assert_eq!(expected_value, parsed_value);
     }
