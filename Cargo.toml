@@ -5,6 +5,9 @@ authors = ["Marc Schreiber <info@schrieveslaach.de>"]
 edition = "2018"
 description = "A crate for reading data storage files of MSSQL's MDF files"
 license = "GPL-3.0"
+homepage = "https://gitlab.com/schrieveslaach/oxidized-mdf"
+repository = "https://gitlab.com/schrieveslaach/oxidized-mdf.git"
+keywords = ["mdf", "parser"]
 
 [dependencies]
 async-log = "2.0"
