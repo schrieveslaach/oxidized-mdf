@@ -1,6 +1,6 @@
 [package]
 name = "oxidized-mdf"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Marc Schreiber <info@schrieveslaach.de>"]
 edition = "2018"
 description = "A crate for reading data storage files of MSSQL's MDF files"
