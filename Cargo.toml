@@ -9,6 +9,8 @@ homepage = "https://gitlab.com/schrieveslaach/oxidized-mdf"
 repository = "https://gitlab.com/schrieveslaach/oxidized-mdf.git"
 keywords = ["mdf", "parser"]
 
+exclude = ["data/*", ".gitlab-ci.yml", ".gitattributes", ".gitignore"]
+
 [dependencies]
 async-log = "2.0"
 async-std = "1.9"
