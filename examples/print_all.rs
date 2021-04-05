@@ -17,7 +17,6 @@ async fn print_rows(db: &mut MdfDatabase, table: &str, row_limit: &Option<usize>
 
     let mut i = 0usize;
     while let Some(row) = rows.next().await {
-        let row = row.unwrap();
         let values = row.values();
 
         if pretty_table.is_empty() {

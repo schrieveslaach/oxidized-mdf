@@ -1,3 +1,4 @@
+use crate::error::Error;
 use crate::pages::{BootPage, PagePointer, Record};
 use crate::PageReader;
 use std::convert::TryFrom;
@@ -84,7 +85,7 @@ impl BaseTableData {
     pub(crate) async fn parse(
         mut page_reader: &mut PageReader,
         boot_page: &BootPage,
-    ) -> async_std::io::Result<Self> {
+    ) -> Result<Self, Error> {
         let sysalloc_units = parse_page_records!(
             &mut page_reader,
             boot_page.first_sys_indexes.clone(),
@@ -490,12 +491,11 @@ impl<'a> TryFrom<Record<'a>> for Syscolpar {
 
 #[cfg(test)]
 mod tests {
-    use crate::MdfDatabase;
-    use async_std::io::Result;
+    use crate::{Error, MdfDatabase};
     use pretty_assertions::assert_eq;
 
     #[async_std::test]
-    async fn test_read_boot_page_records() -> Result<()> {
+    async fn test_read_boot_page_records() -> Result<(), Error> {
         let db = MdfDatabase::open("data/AWLT2005.mdf").await?;
         let auids = db
             .base_table_data

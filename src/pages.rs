@@ -13,6 +13,7 @@ pub(crate) struct PageHeader {
     pub(crate) next_page_pointer: Option<PagePointer>,
 }
 
+#[derive(Debug)]
 pub struct BootPage {
     pub(crate) header: PageHeader,
     pub(crate) database_name: String,

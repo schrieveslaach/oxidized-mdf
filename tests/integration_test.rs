@@ -1,7 +1,6 @@
-use async_std::io::Result;
 use chrono::{TimeZone, Utc};
 use futures_lite::stream::StreamExt;
-use oxidized_mdf::{MdfDatabase, Value};
+use oxidized_mdf::{error::Error, MdfDatabase, Value};
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 
@@ -12,7 +11,7 @@ use rstest::rstest;
     case("AWLT2005.mdf", "AdventureWorksLT")
 )]
 #[async_std::test]
-async fn database_name(file: &str, db_name: &str) -> Result<()> {
+async fn database_name(file: &str, db_name: &str) -> Result<(), Error> {
     let db = MdfDatabase::open(format!("data/{}", file)).await?;
     assert_eq!(db.database_name(), db_name);
     Ok(())
@@ -25,7 +24,7 @@ async fn database_name(file: &str, db_name: &str) -> Result<()> {
     case("AWLT2005.mdf", vec!["Address", "BuildVersion", "Customer", "CustomerAddress", "ErrorLog", "Product", "ProductCategory", "ProductDescription", "ProductModel", "ProductModelProductDescription", "SalesOrderDetail", "SalesOrderHeader"])
 )]
 #[async_std::test]
-async fn tables(file: &str, table_names: Vec<&str>) -> Result<()> {
+async fn tables(file: &str, table_names: Vec<&str>) -> Result<(), Error> {
     let db = MdfDatabase::open(format!("data/{}", file)).await?;
 
     let mut tables = db.table_names();
@@ -45,7 +44,7 @@ async fn tables(file: &str, table_names: Vec<&str>) -> Result<()> {
     case("spg_verein_TST.mdf", "tbl_PLZ", vec!["Ort", "PLZ", "PLZID"]),
 )]
 #[async_std::test]
-async fn columns(file: &str, table_name: &str, column_names: Vec<&str>) -> Result<()> {
+async fn columns(file: &str, table_name: &str, column_names: Vec<&str>) -> Result<(), Error> {
     let db = MdfDatabase::open(format!("data/{}", file)).await?;
 
     let mut columns = db.column_names(table_name).unwrap();
@@ -65,11 +64,11 @@ async fn columns(file: &str, table_name: &str, column_names: Vec<&str>) -> Resul
     case("spg_verein_TST.mdf", "tbl_Mitglied", "Strasse", "Rebenring 56")
 )]
 #[async_std::test]
-async fn first_row(file: &str, table_name: &str, column: &str, value: &str) -> Result<()> {
+async fn first_row(file: &str, table_name: &str, column: &str, value: &str) -> Result<(), Error> {
     let mut db = MdfDatabase::open(format!("data/{}", file)).await?;
 
     let mut rows = db.rows(table_name).unwrap();
-    let first_row = rows.next().await.unwrap().unwrap();
+    let first_row = rows.next().await.unwrap();
     assert_eq!(
         first_row.value(column),
         Some(&Value::String(value.to_string()))
@@ -88,7 +87,7 @@ async fn first_row(file: &str, table_name: &str, column: &str, value: &str) -> R
     case("spg_verein_TST.mdf", "tbl_Bankleitzahlen", 3549)
 )]
 #[async_std::test]
-async fn number_of_rows(file: &str, table_name: &str, count: usize) -> Result<()> {
+async fn number_of_rows(file: &str, table_name: &str, count: usize) -> Result<(), Error> {
     let mut db = MdfDatabase::open(format!("data/{}", file)).await?;
     let rows = db.rows(table_name).unwrap();
 
@@ -138,11 +137,11 @@ async fn rows(
     skip: usize,
     column: &str,
     expected_value: Value,
-) -> Result<()> {
+) -> Result<(), Error> {
     let mut db = MdfDatabase::open(format!("data/{}", file)).await?;
     let mut rows = db.rows(table_name).unwrap().skip(skip);
 
-    let row = rows.next().await.unwrap().unwrap();
+    let row = rows.next().await.unwrap();
 
     assert_eq!(row.value(column), Some(&expected_value));
 

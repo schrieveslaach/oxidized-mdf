@@ -1,17 +1,34 @@
 //! # A Crate for Parsing MDF files
 //!
 //! `oxidized-mdf` provides utifities to parse MDF files of the [Microsoft SQL Server](https://en.wikipedia.org/wiki/Microsoft_SQL_Server).
+//!
+//! ```rust
+//! use oxidized_mdf::MdfDatabase;
+//! use async_std::stream::StreamExt;
+//!
+//! # #[async_std::main]
+//! # async fn main() {
+//! let mut db = MdfDatabase::open("data/AWLT2005.mdf").await.unwrap();
+//! let mut rows = db.rows("Address").unwrap();
+//!
+//! while let Some(row) = rows.next().await {
+//!    println!("{:?}", row.value("City"));
+//! }
+//! # }
+//! ```
 
 #![warn(rust_2018_idioms)]
 
+pub mod error;
 mod pages;
 mod sys;
 
+use crate::error::Error;
 use crate::pages::{BootPage, Page, PagePointer, Record};
 use crate::sys::{BaseTableData, Column};
 use async_log::span;
 use async_std::fs::File;
-use async_std::io::{Read, Result};
+use async_std::io::Read;
 use async_std::path::{Path, PathBuf};
 use async_std::prelude::*;
 use async_std::stream::Stream;
@@ -34,7 +51,7 @@ pub struct MdfDatabase {
 }
 
 impl MdfDatabase {
-    pub async fn open<P>(p: P) -> Result<Self>
+    pub async fn open<P>(p: P) -> Result<Self, Error>
     where
         P: AsRef<Path>,
     {
@@ -42,10 +59,10 @@ impl MdfDatabase {
         path.push(p);
 
         let file = File::open(&path).await?;
-        Self::from_read(Box::new(file)).await
+        Ok(Self::from_read(Box::new(file)).await?)
     }
 
-    pub async fn from_read(read: Box<dyn Read + Unpin>) -> Result<Self> {
+    pub async fn from_read(read: Box<dyn Read + Unpin>) -> Result<Self, Error> {
         let mut buffer = [0u8; 8192];
         let mut page_reader = PageReader::new(read);
 
@@ -117,7 +134,7 @@ impl MdfDatabase {
     /// # async fn main() {
     /// let mut db = MdfDatabase::open("data/AWLT2005.mdf").await.unwrap();
     /// let mut rows = db.rows("Address").unwrap();
-    /// let first_row = rows.next().await.unwrap().unwrap();
+    /// let first_row = rows.next().await.unwrap();
     ///
     /// assert_eq!(
     ///     first_row.value("AddressLine1").cloned(),
@@ -128,7 +145,7 @@ impl MdfDatabase {
     pub fn rows<'a, 'b: 'a>(
         &'b mut self,
         table_name: &str,
-    ) -> Option<impl Stream<Item = std::result::Result<Row, &'static str>> + 'a> {
+    ) -> Option<impl Stream<Item = Row> + 'a> {
         let table = self.base_table_data.table(table_name)?;
 
         let page_pointers = table.page_pointers();
@@ -171,7 +188,7 @@ impl MdfDatabase {
                                     record = Some(r);
                                 }
 
-                                rows.push(Ok(Row { columns }));
+                                rows.push(Row { columns });
                             }
                         });
                         async_std::stream::from_iter(rows.into_iter())
@@ -196,7 +213,7 @@ pub enum Value {
 }
 
 impl Display for Value {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             Value::Bit(bit) => write!(fmt, "{}", bit),
             Value::TinyInt(i) => write!(fmt, "{}", i),
@@ -216,7 +233,7 @@ impl Value {
     fn parse<'a>(
         column: &Column<'_>,
         record: Record<'a>,
-    ) -> std::result::Result<(Self, Record<'a>), &'static str> {
+    ) -> Result<(Self, Record<'a>), &'static str> {
         match column.r#type {
             "bit" => {
                 let (bit, r) = record.parse_bit()?;
@@ -298,13 +315,13 @@ impl PageReader {
         }
     }
 
-    async fn read_next_page(&mut self, buffer: &mut [u8; 8192]) -> Result<()> {
+    async fn read_next_page(&mut self, buffer: &mut [u8; 8192]) -> Result<(), Error> {
         self.read.read_exact(&mut buffer[..]).await?;
         self.page_index += 1;
         Ok(())
     }
 
-    async fn read_page(&mut self, page_pointer: &PagePointer) -> Result<Rc<Page>> {
+    async fn read_page(&mut self, page_pointer: &PagePointer) -> Result<Rc<Page>, Error> {
         if let Some(page) = self.page_cache.get(page_pointer) {
             return Ok(page.clone());
         }
@@ -341,7 +358,7 @@ struct PageStream<'a> {
 }
 
 impl<'a> PageStream<'a> {
-    async fn next_page(&mut self) -> Option<Result<Rc<Page>>> {
+    async fn next_page(&mut self) -> Option<Result<Rc<Page>, Error>> {
         let page_pointer = match self.current_page.take() {
             Some(current_page) => current_page.next_page_pointer().cloned(),
             None => self.page_pointers.next(),
@@ -363,11 +380,24 @@ impl<'a> PageStream<'a> {
 }
 
 impl<'a> Stream for PageStream<'a> {
-    type Item = Result<Rc<Page>>;
+    type Item = Result<Rc<Page>, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let f = self.next_page();
         futures_lite::pin!(f);
         Poll::Ready(async_std::task::block_on(f))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[async_std::test]
+    async fn should_result_in_io_error_when_file_does_not_exists() {
+        match MdfDatabase::open("some-random-path").await {
+            Err(Error::IoError(err)) if err.kind() == async_std::io::ErrorKind::NotFound => {}
+            _ => panic!("Unexpected result"),
+        }
     }
 }
