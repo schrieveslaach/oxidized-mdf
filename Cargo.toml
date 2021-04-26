@@ -8,6 +8,7 @@ license = "GPL-3.0"
 homepage = "https://gitlab.com/schrieveslaach/oxidized-mdf"
 repository = "https://gitlab.com/schrieveslaach/oxidized-mdf.git"
 keywords = ["mdf", "parser"]
+resolver = "2"
 
 exclude = ["data/*", ".gitlab-ci.yml", ".gitattributes", ".gitignore"]
 
@@ -29,5 +30,5 @@ async-std = { version = "1.9", features = ["attributes"] }
 femme = "2.1"
 pretty_assertions = "0.7"
 prettytable-rs = "0.8"
-rstest = "0.7"
+rstest = "0.8"
 structopt = "0.3"
