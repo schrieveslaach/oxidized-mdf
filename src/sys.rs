@@ -2,6 +2,7 @@ use crate::error::Error;
 use crate::pages::{BootPage, PagePointer, Record};
 use crate::PageReader;
 use std::convert::TryFrom;
+use async_std::stream::StreamExt;
 
 pub(crate) struct BaseTableData {
     sysalloc_units: Vec<SysallocUnit>,
@@ -19,12 +20,9 @@ const SYSSCALARTYPE_IDMAJOR: i32 = 50;
 macro_rules! parse_page_records {
     ( $page_reader:expr, $page_pointer:expr, $t:ty ) => {{
         let mut parsed_records = Vec::new();
-        let mut page_pointer = $page_pointer;
 
-        // TODO: move this code to the page reader: a method that returns an iterator that
-        // returns the next records.
-        loop {
-            let page = $page_reader.read_page(&page_pointer).await?;
+        let mut page_stream = $page_reader.read_pages_of_pointer($page_pointer);
+        while let Some(Ok(page)) = page_stream.next().await {
             parsed_records.extend(
                 page.records()
                     .into_iter()
@@ -32,13 +30,6 @@ macro_rules! parse_page_records {
                     .filter_map(Result::ok)
                     .collect::<Vec<_>>(),
             );
-
-            page_pointer = match page.next_page_pointer().cloned() {
-                Some(next) => next,
-                None => {
-                    break;
-                }
-            }
         }
 
         parsed_records
@@ -49,7 +40,7 @@ macro_rules! parse_from_sysrow_set {
     ( $page_reader:expr, $sysrow_sets:expr, $sysalloc_units:expr, $t:ty ) => {{
         let rowset_id = $sysrow_sets.map(|row| row.rowsetid).unwrap();
 
-        let mut page_pointer = $sysalloc_units
+        let page_pointer = $sysalloc_units
             .iter()
             .find(|unit| unit.auid == rowset_id && unit.r#type == 1)
             .and_then(|unit| PagePointer::try_from(&unit.pgfirst[..]).ok())
@@ -57,10 +48,8 @@ macro_rules! parse_from_sysrow_set {
 
         let mut parsed_records = Vec::new();
 
-        // TODO: move this code to the page reader: a method that returns an iterator that
-        // returns the next records.
-        loop {
-            let page = $page_reader.read_page(&page_pointer).await?;
+        let mut page_stream = $page_reader.read_pages_of_pointer(page_pointer);
+        while let Some(Ok(page)) = page_stream.next().await {
             parsed_records.extend(
                 page.records()
                     .into_iter()
@@ -68,13 +57,6 @@ macro_rules! parse_from_sysrow_set {
                     .filter_map(Result::ok)
                     .collect::<Vec<_>>(),
             );
-
-            page_pointer = match page.next_page_pointer().cloned() {
-                Some(next) => next,
-                None => {
-                    break;
-                }
-            }
         }
 
         parsed_records

@@ -14,7 +14,7 @@ exclude = ["data/*", ".gitlab-ci.yml", ".gitattributes", ".gitignore"]
 
 [dependencies]
 async-log = "2.0"
-async-std = "1.9"
+async-std = "1.10"
 bitvec = "0.22"
 byteorder = "1.4"
 chrono = "0.4"

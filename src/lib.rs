@@ -153,7 +153,7 @@ impl MdfDatabase {
         span!("reading pages of {}", table_name, {
             Some(
                 self.page_reader
-                    .read_pages(page_pointers)
+                    .read_pages_of_pointers(page_pointers)
                     .flat_map(move |page| {
                         let mut rows = Vec::new();
 
@@ -342,9 +342,20 @@ impl PageReader {
         Ok(page.clone())
     }
 
-    fn read_pages<'a, 'b: 'a>(&'b mut self, page_pointers: Vec<PagePointer>) -> PageStream<'a> {
+    fn read_pages_of_pointers<'a, 'b: 'a>(&'b mut self, page_pointers: Vec<PagePointer>) -> PageStream<'a> {
         PageStream {
-            page_pointers: page_pointers.into_iter(),
+            page_pointers: Box::new(page_pointers.into_iter()),
+            page_reader: self,
+            current_page: None,
+        }
+    }
+
+    fn read_pages_of_pointer<'a, 'b: 'a>(
+        &'b mut self,
+        page_pointer: PagePointer,
+    ) -> PageStream<'a> {
+        PageStream {
+            page_pointers: Box::new(std::iter::once(page_pointer)),
             page_reader: self,
             current_page: None,
         }
@@ -352,7 +363,7 @@ impl PageReader {
 }
 
 struct PageStream<'a> {
-    page_pointers: std::vec::IntoIter<PagePointer>,
+    page_pointers: Box<dyn Iterator<Item = PagePointer>>,
     page_reader: &'a mut PageReader,
     current_page: Option<Rc<Page>>,
 }
