@@ -1,8 +1,8 @@
 use crate::error::Error;
 use crate::pages::{BootPage, PagePointer, Record};
 use crate::PageReader;
-use std::convert::TryFrom;
 use async_std::stream::StreamExt;
+use std::convert::TryFrom;
 
 pub(crate) struct BaseTableData {
     sysalloc_units: Vec<SysallocUnit>,
@@ -132,36 +132,34 @@ impl BaseTableData {
     }
 
     pub(crate) fn table<'a, 'b: 'a>(&'b self, table_name: &str) -> Option<Table<'a>> {
-        Some(
-            self.objects_dollar()
-                .find(|o| o.name == table_name)
-                .map(|table| Table {
-                    objects_dollar: table,
-                    sysalloc_units: &self.sysalloc_units,
-                    sysrow_sets: &self.sysrow_sets,
-                    columns: self
-                        .syscolpars
-                        .iter()
-                        .filter(|c| c.number == 0 && c.id == table.id && c.name.is_some())
-                        .map(|c| {
-                            let r#type = self
-                                .sysscalartypes
-                                .iter()
-                                .find(|st| st.xtype == c.xtype)
-                                .map(|st| &st.name)
-                                .expect("Should have type for column");
+        self.objects_dollar()
+            .find(|o| o.name == table_name)
+            .map(|table| Table {
+                objects_dollar: table,
+                sysalloc_units: &self.sysalloc_units,
+                sysrow_sets: &self.sysrow_sets,
+                columns: self
+                    .syscolpars
+                    .iter()
+                    .filter(|c| c.number == 0 && c.id == table.id && c.name.is_some())
+                    .map(|c| {
+                        let r#type = self
+                            .sysscalartypes
+                            .iter()
+                            .find(|st| st.xtype == c.xtype)
+                            .map(|st| &st.name)
+                            .expect("Should have type for column");
 
-                            Column {
-                                name: &c.name.as_ref().unwrap(),
-                                r#type,
-                                max_length: c.length,
-                                precision: c.prec as u8,
-                                scale: c.scale as u8,
-                            }
-                        })
-                        .collect(),
-                })?,
-        )
+                        Column {
+                            name: c.name.as_ref().unwrap(),
+                            r#type,
+                            max_length: c.length,
+                            precision: c.prec as u8,
+                            scale: c.scale as u8,
+                        }
+                    })
+                    .collect(),
+            })
     }
 }
 

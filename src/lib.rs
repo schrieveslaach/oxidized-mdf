@@ -342,7 +342,10 @@ impl PageReader {
         Ok(page.clone())
     }
 
-    fn read_pages_of_pointers<'a, 'b: 'a>(&'b mut self, page_pointers: Vec<PagePointer>) -> PageStream<'a> {
+    fn read_pages_of_pointers<'a, 'b: 'a>(
+        &'b mut self,
+        page_pointers: Vec<PagePointer>,
+    ) -> PageStream<'a> {
         PageStream {
             page_pointers: Box::new(page_pointers.into_iter()),
             page_reader: self,

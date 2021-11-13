@@ -255,7 +255,7 @@ impl<'a> Record<'a> {
             Some(mut bytes) => {
                 let bytes_of_time = if scale <= 2 {
                     3
-                } else if 3 <= scale && scale <= 4 {
+                } else if (3..=4).contains(&scale) {
                     4
                 } else {
                     5
@@ -290,11 +290,8 @@ impl<'a> Record<'a> {
 
     fn pop_next_null_bit(&mut self) -> bool {
         if let Some(null_bitmap) = self.null_bitmap.as_mut() {
-            match null_bitmap.next() {
-                Some(null_bit) => {
-                    return null_bit;
-                }
-                _ => {}
+            if let Some(null_bit) = null_bitmap.next() {
+                return null_bit;
             }
         }
 
@@ -370,7 +367,7 @@ impl<'a> Record<'a> {
 
         let s = match bytes {
             Some(first) => {
-                if first.len() == 0 {
+                if first.is_empty() {
                     // TODO: this is an open question: is it correct to assume that an
                     // empty array is an null string? Some SQL Server do so but is that
                     // true for MSSQL and therefore, is this true for MDF files?
