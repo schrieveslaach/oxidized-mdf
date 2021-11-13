@@ -39,7 +39,6 @@ async fn tables(file: &str, table_names: Vec<&str>) -> Result<(), Error> {
     file,
     table_name,
     column_names,
-    // TODO: strange column name for address table. Check encoding
     case("AWLT2005.mdf", "Address", vec!["AddressID", "AddressLine1", "AddressLine2", "City", "CountryRegion", "ModifiedDate", "PostalCode", "StateProvince", "rowguid"]),
     case("spg_verein_TST.mdf", "tbl_PLZ", vec!["Ort", "PLZ", "PLZID"]),
 )]
