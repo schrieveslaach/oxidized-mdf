@@ -22,13 +22,13 @@ encoding_rs = "0.8"
 futures-lite = "1.11"
 log = "0.4"
 num-bigint = "0.4"
-rust_decimal = "1.10"
+rust_decimal = "1.17"
 uuid = "0.8"
 
 [dev-dependencies]
 async-std = { version = "1.9", features = ["attributes"] }
 femme = "2.1"
-pretty_assertions = "0.7"
+pretty_assertions = "1.0"
 prettytable-rs = "0.8"
-rstest = "0.8"
+rstest = "0.11"
 structopt = "0.3"
